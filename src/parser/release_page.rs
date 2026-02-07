@@ -515,7 +515,10 @@ fn extract_torrent_and_magnet(doc: &Html) -> TorrentMagnetExtract {
         }
 
         let is_http = href_l.starts_with("http://") || href_l.starts_with("https://");
-        let looks_torrent = href_l.contains(".torrent");
+        let text_l = text.to_ascii_lowercase();
+        let looks_torrent = href_l.contains(".torrent")
+            || text_l.contains(".torrent")
+            || text_l.contains("torrent file");
         if is_http && looks_torrent {
             torrent_links.push(href.to_string());
             if !text.is_empty() {

@@ -1,6 +1,7 @@
 [output]
 pretty_json = true
 include_nulls = false
+ndjson = false
 
 [scrape]
 page_title = true
@@ -26,10 +27,14 @@ repack_size = true
 
 spoiler_sections = true
 download_section_presence = true
+torrent_file = true
+torrent_file_name = true
+torrent_file_link = true
+magnet = true
 
 [links]
 domain_counts = true
-ignore_magnet = true
+ignore_magnet = false
 
 [profile]
 wordpress_release_layout = true

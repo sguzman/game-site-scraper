@@ -48,27 +48,77 @@ fn main() -> Result<()> {
             }
 
             let bundle = parser::parse_many(&files, &cfg).context("parse inputs")?;
-            let json = if args.pretty || cfg.output.pretty_json {
-                serde_json::to_string_pretty(&bundle)?
-            } else {
-                serde_json::to_string(&bundle)?
-            };
+            let use_ndjson = args.ndjson || cfg.output.ndjson;
 
             match &args.output {
                 Some(path) => {
-                    std::fs::write(path, json)
-                        .with_context(|| format!("write output to {}", path.display()))?;
-                    info!(path = %path.display(), "wrote JSON output");
+                    let mut out = std::io::BufWriter::new(
+                        std::fs::File::create(path)
+                            .with_context(|| format!("create output {}", path.display()))?,
+                    );
+                    write_output(
+                        &mut out,
+                        &bundle,
+                        args.pretty || cfg.output.pretty_json,
+                        use_ndjson,
+                    )?;
+                    out.flush()?;
+                    info!(path = %path.display(), ndjson = use_ndjson, "wrote output");
                 }
                 None => {
                     let mut out = std::io::BufWriter::new(std::io::stdout().lock());
-                    out.write_all(json.as_bytes())?;
-                    out.write_all(b"\n")?;
+                    write_output(
+                        &mut out,
+                        &bundle,
+                        args.pretty || cfg.output.pretty_json,
+                        use_ndjson,
+                    )?;
                     out.flush()?;
                 }
             }
         }
     }
 
+    Ok(())
+}
+
+fn write_output<W: Write>(
+    out: &mut W,
+    bundle: &model::OutputBundle,
+    pretty_json: bool,
+    ndjson: bool,
+) -> Result<()> {
+    if ndjson {
+        for doc in &bundle.documents {
+            let line = serde_json::to_string(doc)?;
+            out.write_all(line.as_bytes())?;
+            out.write_all(b"\n")?;
+        }
+        for err in &bundle.errors {
+            let line = serde_json::json!({
+                "type": "error",
+                "data": err
+            })
+            .to_string();
+            out.write_all(line.as_bytes())?;
+            out.write_all(b"\n")?;
+        }
+        let summary = serde_json::json!({
+            "type": "summary",
+            "data": &bundle.stats
+        })
+        .to_string();
+        out.write_all(summary.as_bytes())?;
+        out.write_all(b"\n")?;
+        return Ok(());
+    }
+
+    let json = if pretty_json {
+        serde_json::to_string_pretty(bundle)?
+    } else {
+        serde_json::to_string(bundle)?
+    };
+    out.write_all(json.as_bytes())?;
+    out.write_all(b"\n")?;
     Ok(())
 }

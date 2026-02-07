@@ -50,6 +50,18 @@ pub struct ParsedDocument {
 
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub download_section_headings: Vec<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub torrent_file: Option<bool>,
+
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub torrent_file_names: Vec<String>,
+
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub torrent_file_links: Vec<String>,
+
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub magnet_links: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

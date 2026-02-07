@@ -31,6 +31,10 @@ pub fn parse_wordpress_release(html: &str, cfg: &Config) -> Result<ParsedDocumen
         spoiler_sections: vec![],
         link_domain_counts: BTreeMap::new(),
         download_section_headings: vec![],
+        torrent_file: None,
+        torrent_file_names: vec![],
+        torrent_file_links: vec![],
+        magnet_links: vec![],
     };
 
     if cfg.scrape.page_title || cfg.scrape.canonical_url || cfg.scrape.meta_tags {
@@ -194,6 +198,26 @@ pub fn parse_wordpress_release(html: &str, cfg: &Config) -> Result<ParsedDocumen
         out.link_domain_counts = extract_domain_counts(&doc, cfg.links.ignore_magnet);
     }
 
+    if cfg.scrape.torrent_file
+        || cfg.scrape.torrent_file_name
+        || cfg.scrape.torrent_file_link
+        || cfg.scrape.magnet
+    {
+        let extracted = extract_torrent_and_magnet(&doc);
+        if cfg.scrape.torrent_file {
+            out.torrent_file = Some(!extracted.torrent_file_links.is_empty());
+        }
+        if cfg.scrape.torrent_file_name {
+            out.torrent_file_names = extracted.torrent_file_names;
+        }
+        if cfg.scrape.torrent_file_link {
+            out.torrent_file_links = extracted.torrent_file_links;
+        }
+        if cfg.scrape.magnet {
+            out.magnet_links = extracted.magnet_links;
+        }
+    }
+
     Ok(out)
 }
 
@@ -214,6 +238,10 @@ pub fn parse_generic(html: &str, cfg: &Config) -> Result<ParsedDocument> {
         spoiler_sections: vec![],
         link_domain_counts: BTreeMap::new(),
         download_section_headings: vec![],
+        torrent_file: None,
+        torrent_file_names: vec![],
+        torrent_file_links: vec![],
+        magnet_links: vec![],
     };
 
     if cfg.scrape.page_title || cfg.scrape.canonical_url || cfg.scrape.meta_tags {
@@ -240,7 +268,33 @@ pub fn parse_generic(html: &str, cfg: &Config) -> Result<ParsedDocument> {
         out.link_domain_counts = extract_domain_counts(&doc, cfg.links.ignore_magnet);
     }
 
+    if cfg.scrape.torrent_file
+        || cfg.scrape.torrent_file_name
+        || cfg.scrape.torrent_file_link
+        || cfg.scrape.magnet
+    {
+        let extracted = extract_torrent_and_magnet(&doc);
+        if cfg.scrape.torrent_file {
+            out.torrent_file = Some(!extracted.torrent_file_links.is_empty());
+        }
+        if cfg.scrape.torrent_file_name {
+            out.torrent_file_names = extracted.torrent_file_names;
+        }
+        if cfg.scrape.torrent_file_link {
+            out.torrent_file_links = extracted.torrent_file_links;
+        }
+        if cfg.scrape.magnet {
+            out.magnet_links = extracted.magnet_links;
+        }
+    }
+
     Ok(out)
+}
+
+struct TorrentMagnetExtract {
+    torrent_file_names: Vec<String>,
+    torrent_file_links: Vec<String>,
+    magnet_links: Vec<String>,
 }
 
 fn select_text(doc: &Html, selector: &str) -> Option<String> {
@@ -429,4 +483,57 @@ fn extract_domain_counts(doc: &Html, ignore_magnet: bool) -> BTreeMap<String, u6
     }
 
     out
+}
+
+fn extract_torrent_and_magnet(doc: &Html) -> TorrentMagnetExtract {
+    let mut names: Vec<String> = Vec::new();
+    let mut torrent_links: Vec<String> = Vec::new();
+    let mut magnet_links: Vec<String> = Vec::new();
+
+    let selector = match Selector::parse("a[href]") {
+        Ok(s) => s,
+        Err(_) => {
+            return TorrentMagnetExtract {
+                torrent_file_names: names,
+                torrent_file_links: torrent_links,
+                magnet_links,
+            };
+        }
+    };
+
+    for a in doc.select(&selector) {
+        let href = match a.value().attr("href") {
+            Some(h) => h.trim(),
+            None => continue,
+        };
+        let href_l = href.to_ascii_lowercase();
+        let text = normalize_ws(&a.text().collect::<Vec<_>>().join(" "));
+
+        if href_l.starts_with("magnet:") {
+            magnet_links.push(href.to_string());
+            continue;
+        }
+
+        let is_http = href_l.starts_with("http://") || href_l.starts_with("https://");
+        let looks_torrent = href_l.contains(".torrent");
+        if is_http && looks_torrent {
+            torrent_links.push(href.to_string());
+            if !text.is_empty() {
+                names.push(text);
+            }
+        }
+    }
+
+    names.sort();
+    names.dedup();
+    torrent_links.sort();
+    torrent_links.dedup();
+    magnet_links.sort();
+    magnet_links.dedup();
+
+    TorrentMagnetExtract {
+        torrent_file_names: names,
+        torrent_file_links: torrent_links,
+        magnet_links,
+    }
 }

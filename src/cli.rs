@@ -50,6 +50,9 @@ pub struct ParseArgs {
 
     #[arg(long)]
     pub pretty: bool,
+
+    #[arg(long)]
+    pub ndjson: bool,
 }
 
 #[derive(Args, Debug)]

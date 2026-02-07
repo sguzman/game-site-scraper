@@ -37,6 +37,7 @@ impl Config {
 pub struct OutputConfig {
     pub pretty_json: bool,
     pub include_nulls: bool,
+    pub ndjson: bool,
 }
 
 impl Default for OutputConfig {
@@ -44,6 +45,7 @@ impl Default for OutputConfig {
         Self {
             pretty_json: true,
             include_nulls: false,
+            ndjson: false,
         }
     }
 }
@@ -73,6 +75,10 @@ pub struct ScrapeConfig {
 
     pub spoiler_sections: bool,
     pub download_section_presence: bool,
+    pub torrent_file: bool,
+    pub torrent_file_name: bool,
+    pub torrent_file_link: bool,
+    pub magnet: bool,
 }
 
 impl Default for ScrapeConfig {
@@ -101,6 +107,10 @@ impl Default for ScrapeConfig {
 
             spoiler_sections: true,
             download_section_presence: true,
+            torrent_file: true,
+            torrent_file_name: true,
+            torrent_file_link: true,
+            magnet: true,
         }
     }
 }
@@ -151,6 +161,7 @@ const DEFAULT_CONFIG_TOML: &str = r#"# game-scraper configuration
 [output]
 pretty_json = true
 include_nulls = false
+ndjson = false
 
 [scrape]
 page_title = true
@@ -176,6 +187,10 @@ repack_size = true
 
 spoiler_sections = true
 download_section_presence = true
+torrent_file = true
+torrent_file_name = true
+torrent_file_link = true
+magnet = true
 
 [links]
 domain_counts = true

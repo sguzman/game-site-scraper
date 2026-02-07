@@ -1,0 +1,36 @@
+[output]
+pretty_json = true
+include_nulls = false
+
+[scrape]
+page_title = true
+canonical_url = true
+meta_tags = true
+
+post_id = true
+categories = true
+wp_tags = true
+
+entry_title = true
+entry_datetime = true
+author = true
+comments_count = true
+
+release_number = true
+game_title_line = true
+genres_tags = true
+companies = true
+languages = true
+original_size = true
+repack_size = true
+
+spoiler_sections = true
+download_section_presence = true
+
+[links]
+domain_counts = true
+ignore_magnet = true
+
+[profile]
+wordpress_release_layout = true
+spoiler_denylist = ["click to show direct links", "direct links", "magnet", "torrent"]

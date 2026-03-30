@@ -6,11 +6,12 @@ use crate::parser;
 use anyhow::{anyhow, bail, Context, Result};
 use meilisearch_sdk::client::Client;
 use meilisearch_sdk::errors::{Error as MeiliError, ErrorCode, ErrorType};
+use meilisearch_sdk::settings::Settings;
 use meilisearch_sdk::task_info::TaskInfo;
 use meilisearch_sdk::tasks::Task;
 use serde::Serialize;
 use std::time::{Duration, Instant};
-use tracing::{error, info, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 const TASK_POLL_INTERVAL_MS: u64 = 200;
 const RETRY_ATTEMPTS: usize = 3;
@@ -70,11 +71,7 @@ pub fn run(args: &MeilisearchArgs, cfg: &Config) -> Result<()> {
         );
     }
 
-    let documents: Vec<MeiliDocument> = bundle
-        .documents
-        .iter()
-        .map(map_document)
-        .collect();
+    let documents: Vec<MeiliDocument> = bundle.documents.iter().map(map_document).collect();
 
     if documents.is_empty() {
         warn!("no parsed documents to index");
@@ -105,18 +102,23 @@ fn resolve_settings(args: &MeilisearchArgs, cfg: &Config) -> Result<ResolvedMeil
     };
 
     if let Some(host) = &args.host {
+        debug!(override_value = %host, "overriding meilisearch host");
         settings.host = host.clone();
     }
     if let Some(index) = &args.index {
+        debug!(override_value = %index, "overriding meilisearch index uid");
         settings.index_uid = index.clone();
     }
     if let Some(api_key) = &args.api_key {
+        debug!("overriding meilisearch api key");
         settings.api_key = Some(api_key.clone());
     }
     if let Some(batch_size) = args.batch_size {
+        debug!(override_value = batch_size, "overriding meilisearch batch size");
         settings.batch_size = batch_size;
     }
     if let Some(timeout_secs) = args.timeout_secs {
+        debug!(override_value = timeout_secs, "overriding meilisearch timeout");
         settings.timeout_secs = timeout_secs;
     }
     if let Some(mode) = args.mode {
@@ -124,6 +126,7 @@ fn resolve_settings(args: &MeilisearchArgs, cfg: &Config) -> Result<ResolvedMeil
             MeilisearchModeArg::Upsert => MeilisearchMode::Upsert,
             MeilisearchModeArg::CleanInsert => MeilisearchMode::CleanInsert,
         };
+        debug!(override_value = ?settings.mode, "overriding meilisearch mode");
     }
 
     settings.api_key = settings
@@ -185,6 +188,7 @@ async fn run_indexing(settings: &ResolvedMeilisearch, documents: &[MeiliDocument
 
     let index = client.index(&settings.index_uid);
     submit_batches(&client, &index, settings, documents).await?;
+    info!(indexed_count = documents.len(), "completed indexing");
 
     Ok(())
 }
@@ -204,6 +208,8 @@ async fn ensure_index(client: &Client, settings: &ResolvedMeilisearch) -> Result
     .await?;
 
     wait_for_task(client, task, settings, "create_index").await?;
+    let index = client.index(&settings.index_uid);
+    apply_settings(client, &index, settings).await?;
     Ok(())
 }
 
@@ -227,6 +233,8 @@ async fn clean_insert_index(client: &Client, settings: &ResolvedMeilisearch) -> 
     })
     .await?;
     wait_for_task(client, task, settings, "create_index").await?;
+    let index = client.index(&settings.index_uid);
+    apply_settings(client, &index, settings).await?;
 
     Ok(())
 }
@@ -272,6 +280,21 @@ async fn submit_batches(
         .await?;
     }
 
+    Ok(())
+}
+
+async fn apply_settings(
+    client: &Client,
+    index: &meilisearch_sdk::indexes::Index,
+    settings: &ResolvedMeilisearch,
+) -> Result<()> {
+    let settings_payload = build_index_settings();
+    info!(index_uid = %settings.index_uid, "applying index settings");
+    let task = retry_meili("set_settings", || async {
+        index.set_settings(&settings_payload).await
+    })
+    .await?;
+    wait_for_task(client, task, settings, "set_settings").await?;
     Ok(())
 }
 
@@ -378,6 +401,44 @@ fn is_retryable(err: &MeiliError) -> bool {
 fn retry_delay(attempt: usize) -> Duration {
     let base = RETRY_BASE_DELAY_MS.saturating_mul(2_u64.saturating_pow(attempt as u32 - 1));
     Duration::from_millis(base.min(5_000))
+}
+
+fn build_index_settings() -> Settings {
+    Settings::new()
+        .with_displayed_attributes([
+            "poster",
+            "title",
+            "site",
+            "source_path",
+            "canonical_url",
+            "categories",
+            "wp_tags",
+            "genres",
+            "companies",
+            "languages_raw",
+            "original_size_raw",
+            "repack_size_raw",
+            "release_number",
+            "entry_datetime",
+            "author",
+            "torrent_file",
+        ])
+        .with_searchable_attributes([
+            "title",
+            "categories",
+            "wp_tags",
+            "genres",
+            "companies",
+            "languages_raw",
+        ])
+        .with_filterable_attributes([
+            "categories",
+            "wp_tags",
+            "genres",
+            "companies",
+            "languages_raw",
+        ])
+        .with_sortable_attributes(["release_number", "entry_datetime"])
 }
 
 fn map_document(doc: &ParsedDocument) -> MeiliDocument {

@@ -145,3 +145,36 @@ Add parsing mechanics to extract the FitGirl game cover image URL from the saved
 
 - Meilisearch does not mandate a special “cover image” attribute; the *client/UI* decides what to render. This roadmap standardizes on `poster` because Meilisearch’s own sample datasets and demos commonly use `poster` as a URL-to-image field.
 - Primary key inference can error when multiple fields ending in `id` exist; prefer explicitly setting the primary key at index creation and also keeping document schemas tidy.
+
+## Batch 1 (30 Items)
+
+- [ ] Decide which Meilisearch Rust SDK/version to use
+- [ ] Add `[meilisearch]` to default `scrape.toml`
+- [ ] Extend config structs with Meilisearch settings
+- [ ] Add config validation for required settings per mode
+- [ ] Decide final CLI subcommand name and structure
+- [ ] Add `--mode` override flag for `upsert|clean-insert`
+- [ ] Add `--host` override flag
+- [ ] Add `--index` override flag
+- [ ] Add `--api-key` override flag (with redaction in logs)
+- [ ] Add `--batch-size` override flag
+- [ ] Implement a Meilisearch client wrapper module
+- [ ] Implement index create with explicit primary key
+- [ ] Implement index delete
+- [ ] Implement index existence check
+- [ ] Implement upsert mode flow
+- [ ] Implement clean-insert mode flow
+- [ ] Implement batched document submission
+- [ ] Implement task polling with timeout
+- [ ] Add retry/backoff for transient HTTP errors
+- [ ] Add document-mapper with stable `id`
+- [ ] Add cover image extraction to parser
+- [ ] Add `poster` field to Meili document
+- [ ] Ensure `poster` is the first image-like URL for mini-dashboard
+- [ ] Normalize cover image URL to absolute
+- [ ] Add unit tests for `id` mapping
+- [ ] Add unit tests for cover image extraction
+- [ ] Add integration test plan for local Meilisearch
+- [ ] Update README with Meilisearch usage
+- [ ] Add troubleshooting section (auth/index/payload)
+- [ ] Add log events for task UIDs and durations

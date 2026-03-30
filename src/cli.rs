@@ -32,6 +32,7 @@ pub enum Command {
     InitConfig(InitConfigArgs),
     PrintConfig(PrintConfigArgs),
     Completions(CompletionsArgs),
+    Meilisearch(MeilisearchArgs),
 }
 
 #[derive(Args, Debug)]
@@ -73,6 +74,36 @@ pub struct CompletionsArgs {
     pub shell: ShellArg,
 }
 
+#[derive(Args, Debug)]
+pub struct MeilisearchArgs {
+    #[arg(value_name = "INPUT", required = true)]
+    pub inputs: Vec<PathBuf>,
+
+    #[arg(short, long)]
+    pub recursive: bool,
+
+    #[arg(long)]
+    pub follow_symlinks: bool,
+
+    #[arg(long, value_enum)]
+    pub mode: Option<MeilisearchModeArg>,
+
+    #[arg(long, value_name = "URL")]
+    pub host: Option<String>,
+
+    #[arg(long, value_name = "UID")]
+    pub index: Option<String>,
+
+    #[arg(long, value_name = "KEY")]
+    pub api_key: Option<String>,
+
+    #[arg(long, value_name = "N")]
+    pub batch_size: Option<usize>,
+
+    #[arg(long, value_name = "SECS")]
+    pub timeout_secs: Option<u64>,
+}
+
 #[derive(Copy, Clone, Debug, ValueEnum)]
 pub enum ShellArg {
     Bash,
@@ -99,6 +130,12 @@ pub enum LogFormat {
     Auto,
     Pretty,
     Json,
+}
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+pub enum MeilisearchModeArg {
+    Upsert,
+    CleanInsert,
 }
 
 pub fn init_tracing(cli: &Cli) -> Result<()> {

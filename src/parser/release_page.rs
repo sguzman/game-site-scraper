@@ -25,6 +25,7 @@ pub fn parse_wordpress_release(html: &str, cfg: &Config) -> Result<ParsedDocumen
             sha256: String::new(),
         },
         site: "wordpress_release".to_string(),
+        poster: None,
         page: None,
         post: None,
         release: None,
@@ -55,6 +56,20 @@ pub fn parse_wordpress_release(html: &str, cfg: &Config) -> Result<ParsedDocumen
         }
 
         out.page = Some(page);
+    }
+
+    if cfg.scrape.cover_image {
+        let base_url = out
+            .page
+            .as_ref()
+            .and_then(|page| page.canonical_url.as_deref())
+            .or_else(|| {
+                out.page
+                    .as_ref()
+                    .and_then(|page| page.meta.get("og:url"))
+                    .map(|s| s.as_str())
+            });
+        out.poster = extract_cover_image(&doc, base_url);
     }
 
     let mut post = PostMeta {
@@ -246,6 +261,7 @@ pub fn parse_generic(html: &str, cfg: &Config) -> Result<ParsedDocument> {
             sha256: String::new(),
         },
         site: "generic".to_string(),
+        poster: None,
         page: None,
         post: None,
         release: None,
@@ -276,6 +292,20 @@ pub fn parse_generic(html: &str, cfg: &Config) -> Result<ParsedDocument> {
         }
 
         out.page = Some(page);
+    }
+
+    if cfg.scrape.cover_image {
+        let base_url = out
+            .page
+            .as_ref()
+            .and_then(|page| page.canonical_url.as_deref())
+            .or_else(|| {
+                out.page
+                    .as_ref()
+                    .and_then(|page| page.meta.get("og:url"))
+                    .map(|s| s.as_str())
+            });
+        out.poster = extract_cover_image(&doc, base_url);
     }
 
     if cfg.links.domain_counts {
@@ -349,6 +379,61 @@ fn select_attr(doc: &Html, selector: &str, attr: &str) -> Option<String> {
         .next()
         .and_then(|e| e.value().attr(attr))
         .map(|s| s.to_string())
+}
+
+fn extract_cover_image(doc: &Html, base_url: Option<&str>) -> Option<String> {
+    let candidates = [
+        ("meta[property='og:image']", "content"),
+        ("meta[property='og:image:url']", "content"),
+        ("meta[name='twitter:image']", "content"),
+        ("meta[property='twitter:image']", "content"),
+        ("meta[name='twitter:image:src']", "content"),
+    ];
+
+    for (selector, attr) in candidates {
+        if let Some(value) = select_attr(doc, selector, attr) {
+            if let Some(url) = normalize_image_url(&value, base_url) {
+                return Some(url);
+            }
+        }
+    }
+
+    let image_selectors = [
+        ("img.wp-post-image", "src"),
+        ("figure.wp-block-image img", "src"),
+        ("div.entry-content img", "src"),
+        ("article img", "src"),
+    ];
+
+    for (selector, attr) in image_selectors {
+        if let Some(value) = select_attr(doc, selector, attr) {
+            if let Some(url) = normalize_image_url(&value, base_url) {
+                return Some(url);
+            }
+        }
+    }
+
+    None
+}
+
+fn normalize_image_url(raw: &str, base_url: Option<&str>) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        return Some(trimmed.to_string());
+    }
+
+    if trimmed.starts_with("//") {
+        return Some(format!("https:{trimmed}"));
+    }
+
+    let base = base_url?;
+    let base_url = Url::parse(base).ok()?;
+    let joined = base_url.join(trimmed).ok()?;
+    Some(joined.to_string())
 }
 
 fn extract_meta_tags(doc: &Html) -> BTreeMap<String, String> {
@@ -562,5 +647,45 @@ fn extract_torrent_and_magnet(doc: &Html) -> TorrentMagnetExtract {
         torrent_file_names: names,
         torrent_file_links: torrent_links,
         magnet_links,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+
+    #[test]
+    fn cover_image_prefers_og_image() {
+        let html = r#"
+        <html>
+            <head>
+                <meta property="og:image" content="https://example.com/cover.jpg"/>
+            </head>
+            <body></body>
+        </html>
+        "#;
+        let cfg = Config::default();
+        let doc = parse_generic(html, &cfg).expect("parse");
+        assert_eq!(doc.poster.as_deref(), Some("https://example.com/cover.jpg"));
+    }
+
+    #[test]
+    fn cover_image_normalizes_relative_url() {
+        let html = r#"
+        <html>
+            <head>
+                <link rel="canonical" href="https://example.com/game/"/>
+                <meta name="twitter:image" content="/images/cover.png"/>
+            </head>
+            <body></body>
+        </html>
+        "#;
+        let cfg = Config::default();
+        let doc = parse_generic(html, &cfg).expect("parse");
+        assert_eq!(
+            doc.poster.as_deref(),
+            Some("https://example.com/images/cover.png")
+        );
     }
 }

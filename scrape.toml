@@ -7,6 +7,7 @@ ndjson = false
 page_title = true
 canonical_url = true
 meta_tags = true
+cover_image = true
 
 post_id = true
 categories = true
@@ -39,3 +40,12 @@ ignore_magnet = false
 [profile]
 wordpress_release_layout = true
 spoiler_denylist = ["click to show direct links", "direct links", "magnet", "torrent"]
+
+[meilisearch]
+host = "http://127.0.0.1:7700"
+api_key = ""
+index_uid = "fitgirl-games"
+primary_key = "id"
+batch_size = 1000
+timeout_secs = 120
+mode = "upsert"

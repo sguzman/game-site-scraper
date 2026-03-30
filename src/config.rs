@@ -10,6 +10,7 @@ pub struct Config {
     pub scrape: ScrapeConfig,
     pub links: LinkConfig,
     pub profile: ProfileConfig,
+    pub meilisearch: MeilisearchConfig,
 }
 
 impl Config {
@@ -60,6 +61,7 @@ pub struct ScrapeConfig {
     pub page_title: bool,
     pub canonical_url: bool,
     pub meta_tags: bool,
+    pub cover_image: bool,
 
     pub post_id: bool,
     pub categories: bool,
@@ -92,6 +94,7 @@ impl Default for ScrapeConfig {
             page_title: true,
             canonical_url: true,
             meta_tags: true,
+            cover_image: true,
 
             post_id: true,
             categories: true,
@@ -155,6 +158,44 @@ impl Default for ProfileConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MeilisearchMode {
+    Upsert,
+    CleanInsert,
+}
+
+impl Default for MeilisearchMode {
+    fn default() -> Self {
+        Self::Upsert
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeilisearchConfig {
+    pub host: String,
+    pub api_key: Option<String>,
+    pub index_uid: String,
+    pub primary_key: String,
+    pub batch_size: usize,
+    pub timeout_secs: u64,
+    pub mode: MeilisearchMode,
+}
+
+impl Default for MeilisearchConfig {
+    fn default() -> Self {
+        Self {
+            host: "http://127.0.0.1:7700".to_string(),
+            api_key: None,
+            index_uid: "fitgirl-games".to_string(),
+            primary_key: "id".to_string(),
+            batch_size: 1000,
+            timeout_secs: 120,
+            mode: MeilisearchMode::Upsert,
+        }
+    }
+}
+
 pub fn write_default_config(path: &PathBuf) -> Result<()> {
     std::fs::write(path, DEFAULT_CONFIG_TOML).context("write default config template")?;
     Ok(())
@@ -172,6 +213,7 @@ ndjson = false
 page_title = true
 canonical_url = true
 meta_tags = true
+cover_image = true
 
 post_id = true
 categories = true
@@ -204,4 +246,13 @@ ignore_magnet = true
 [profile]
 wordpress_release_layout = true
 spoiler_denylist = ["click to show direct links", "direct links", "magnet", "torrent"]
+
+[meilisearch]
+host = "http://127.0.0.1:7700"
+api_key = ""
+index_uid = "fitgirl-games"
+primary_key = "id"
+batch_size = 1000
+timeout_secs = 120
+mode = "upsert"
 "#;

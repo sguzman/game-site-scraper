@@ -30,6 +30,8 @@ pub struct ParsedDocumentWithNulls {
     pub source: model::SourceInfo,
     pub site: String,
 
+    pub poster: Option<String>,
+
     pub page: Option<PageMetaWithNulls>,
     pub post: Option<PostMetaWithNulls>,
     pub release: Option<ReleaseMetaWithNulls>,
@@ -60,6 +62,7 @@ impl From<&model::ParsedDocument> for ParsedDocumentWithNulls {
         Self {
             source: v.source.clone(),
             site: v.site.clone(),
+            poster: v.poster.clone(),
             page: v.page.as_ref().map(PageMetaWithNulls::from),
             post: v.post.as_ref().map(PostMetaWithNulls::from),
             release: v.release.as_ref().map(ReleaseMetaWithNulls::from),

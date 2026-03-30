@@ -34,6 +34,9 @@ pub struct ParsedDocument {
     pub site: String,
 
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub poster: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub page: Option<PageMeta>,
 
     #[serde(skip_serializing_if = "Option::is_none")]

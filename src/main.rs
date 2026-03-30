@@ -3,6 +3,7 @@
 mod cli;
 mod config;
 mod fs;
+mod meilisearch;
 mod model;
 mod output;
 mod parser;
@@ -89,6 +90,10 @@ fn run() -> Result<()> {
                     out.flush()?;
                 }
             }
+        }
+        cli::Command::Meilisearch(args) => {
+            let cfg = config::Config::load(cli.config.as_deref())?;
+            meilisearch::run(&args, &cfg).context("meilisearch upsert")?;
         }
     }
 

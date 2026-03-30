@@ -36,6 +36,8 @@ struct ResolvedMeilisearch {
     stats_only: bool,
     settings_only: bool,
     sample: Option<usize>,
+    fail_fast: bool,
+    max_in_flight: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -74,6 +76,15 @@ pub fn run(args: &MeilisearchArgs, cfg: &Config) -> Result<()> {
     let input = collect_input(args, cfg)?;
 
     if input.documents.is_empty() {
+        if settings.stats_only || settings.dry_run {
+            info!(
+                parsed_ok = input.stats.parsed_ok,
+                parsed_err = input.stats.parsed_err,
+                indexed_count = 0,
+                "no documents parsed"
+            );
+            return Ok(());
+        }
         warn!("no parsed documents to index");
         return Ok(());
     }
@@ -92,6 +103,18 @@ pub fn run(args: &MeilisearchArgs, cfg: &Config) -> Result<()> {
             indexed_count = input.documents.len(),
             "stats-only enabled; skipping indexing"
         );
+        if let Some(sample_size) = settings.sample {
+            let sample_size = sample_size.min(input.documents.len());
+            let samples: Vec<MeiliDocument> = input
+                .documents
+                .iter()
+                .take(sample_size)
+                .map(|doc| map_document(doc, settings.id_strategy))
+                .collect();
+            for (idx, doc) in samples.iter().enumerate() {
+                info!(sample_index = idx + 1, document = ?doc, "sample document");
+            }
+        }
         return Ok(());
     }
 
@@ -150,6 +173,8 @@ fn resolve_settings(args: &MeilisearchArgs, cfg: &Config) -> Result<ResolvedMeil
         stats_only: false,
         settings_only: false,
         sample: None,
+        fail_fast: false,
+        max_in_flight: 1,
     };
 
     if let Some(host) = &args.host {
@@ -204,6 +229,21 @@ fn resolve_settings(args: &MeilisearchArgs, cfg: &Config) -> Result<ResolvedMeil
         settings.sample = Some(sample);
         debug!(override_value = sample, "setting sample size");
     }
+    if args.fail_fast {
+        settings.fail_fast = true;
+        debug!("fail-fast enabled via CLI");
+    }
+    if let Some(max_in_flight) = args.max_in_flight {
+        settings.max_in_flight = max_in_flight;
+        debug!(override_value = max_in_flight, "setting max_in_flight");
+    }
+    if let Some(settings_file) = &args.settings_file {
+        settings.settings = load_settings_file(settings_file)?;
+        debug!(
+            path = %settings_file.display(),
+            "loaded meilisearch settings file"
+        );
+    }
     if let Some(mode) = args.mode {
         settings.mode = match mode {
             MeilisearchModeArg::Upsert => MeilisearchMode::Upsert,
@@ -238,6 +278,8 @@ fn resolve_settings(args: &MeilisearchArgs, cfg: &Config) -> Result<ResolvedMeil
         stats_only = settings.stats_only,
         settings_only = settings.settings_only,
         sample = settings.sample.unwrap_or(0),
+        fail_fast = settings.fail_fast,
+        max_in_flight = settings.max_in_flight,
         api_key_set = settings.api_key.is_some(),
         "resolved meilisearch config"
     );
@@ -258,16 +300,35 @@ fn validate_settings(settings: &ResolvedMeilisearch) -> Result<()> {
     if settings.batch_size == 0 {
         bail!("meilisearch batch size must be greater than zero");
     }
+    if settings.max_in_flight == 0 {
+        bail!("meilisearch max_in_flight must be greater than zero");
+    }
     if settings.settings_only && settings.dry_run {
         bail!("cannot combine --settings-only with --dry-run");
     }
     if settings.settings_only && settings.stats_only {
         bail!("cannot combine --settings-only with --stats-only");
     }
-    validate_attr_list("displayed_attributes", &settings.settings.displayed_attributes)?;
-    validate_attr_list("searchable_attributes", &settings.settings.searchable_attributes)?;
-    validate_attr_list("filterable_attributes", &settings.settings.filterable_attributes)?;
-    validate_attr_list("sortable_attributes", &settings.settings.sortable_attributes)?;
+    validate_attr_list(
+        "displayed_attributes",
+        &settings.settings.displayed_attributes,
+        false,
+    )?;
+    validate_attr_list(
+        "searchable_attributes",
+        &settings.settings.searchable_attributes,
+        false,
+    )?;
+    validate_attr_list(
+        "filterable_attributes",
+        &settings.settings.filterable_attributes,
+        false,
+    )?;
+    validate_attr_list(
+        "sortable_attributes",
+        &settings.settings.sortable_attributes,
+        true,
+    )?;
     Ok(())
 }
 
@@ -349,52 +410,112 @@ async fn submit_batches(
     documents: &[MeiliDocument],
 ) -> Result<()> {
     let total = documents.len();
+    if settings.max_in_flight <= 1 {
+        let mut batch_num = 0usize;
+        for chunk in documents.chunks(settings.batch_size) {
+            batch_num += 1;
+            submit_one_batch(client, index, settings, batch_num, total, chunk.to_vec()).await?;
+        }
+        return Ok(());
+    }
+
+    let mut join_set = tokio::task::JoinSet::new();
     let mut batch_num = 0usize;
+    let mut submitted = 0usize;
+    let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(settings.max_in_flight));
+    let fail_fast = settings.fail_fast;
 
     for chunk in documents.chunks(settings.batch_size) {
         batch_num += 1;
-        let batch_size = chunk.len();
-        let batch_start = Instant::now();
-        let batch_first = chunk.first().map(|doc| doc.id.as_str()).unwrap_or("");
-        let batch_last = chunk.last().map(|doc| doc.id.as_str()).unwrap_or("");
-        info!(
-            batch = batch_num,
-            batch_size,
-            total,
-            first_id = batch_first,
-            last_id = batch_last,
-            "submitting document batch"
-        );
+        let permit = semaphore.clone().acquire_owned().await?;
+        let chunk_vec = chunk.to_vec();
+        let client = client.clone();
+        let index = index.clone();
+        let settings_for_task = settings.clone();
+        let total = total;
 
-        let task = retry_meili("add_documents", || async {
-            index
-                .add_documents(chunk, Some(&settings.primary_key))
-                .await
-        })
-        .await?;
+        join_set.spawn(async move {
+            let _permit = permit;
+            submit_one_batch(&client, &index, &settings_for_task, batch_num, total, chunk_vec).await
+        });
+        submitted += 1;
 
-        info!(
-            batch = batch_num,
-            task_uid = task.get_task_uid(),
-            "submitted document batch"
-        );
-
-        wait_for_task(
-            client,
-            task,
-            settings,
-            &format!("batch_{batch_num}"),
-        )
-        .await?;
-
-        info!(
-            batch = batch_num,
-            batch_size,
-            elapsed_ms = batch_start.elapsed().as_millis(),
-            "batch completed"
-        );
+        if fail_fast {
+            if let Some(result) = join_set.join_next().await {
+                result??;
+            }
+        }
     }
 
+    let mut completed = 0usize;
+    while let Some(result) = join_set.join_next().await {
+        completed += 1;
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                if fail_fast {
+                    join_set.abort_all();
+                    return Err(err);
+                }
+                error!(error = %err, "batch failed");
+            }
+            Err(err) => {
+                if fail_fast {
+                    join_set.abort_all();
+                    return Err(err.into());
+                }
+                error!(error = %err, "batch task failed");
+            }
+        }
+        debug!(completed, submitted, "batch completion progress");
+    }
+
+    Ok(())
+}
+
+async fn submit_one_batch(
+    client: &Client,
+    index: &meilisearch_sdk::indexes::Index,
+    settings: &ResolvedMeilisearch,
+    batch_num: usize,
+    total: usize,
+    chunk: Vec<MeiliDocument>,
+) -> Result<()> {
+    let batch_size = chunk.len();
+    let batch_start = Instant::now();
+    let batch_first = chunk.first().map(|doc| doc.id.as_str()).unwrap_or("");
+    let batch_last = chunk.last().map(|doc| doc.id.as_str()).unwrap_or("");
+    info!(
+        batch = batch_num,
+        batch_size,
+        total,
+        first_id = batch_first,
+        last_id = batch_last,
+        id_strategy = ?settings.id_strategy,
+        "submitting document batch"
+    );
+
+    let task = retry_meili("add_documents", || async {
+        index
+            .add_documents(&chunk, Some(&settings.primary_key))
+            .await
+    })
+    .await?;
+
+    info!(
+        batch = batch_num,
+        task_uid = task.get_task_uid(),
+        "submitted document batch"
+    );
+
+    wait_for_task(client, task, settings, &format!("batch_{batch_num}")).await?;
+
+    info!(
+        batch = batch_num,
+        batch_size,
+        elapsed_ms = batch_start.elapsed().as_millis(),
+        "batch completed"
+    );
     Ok(())
 }
 
@@ -456,8 +577,17 @@ async fn wait_for_task(
         return Ok(status);
     }
 
-    if matches!(status, Task::Failed { .. }) {
-        error!(task_uid, elapsed_ms, label, task = ?status, "task failed");
+    if let Task::Failed { content } = &status {
+        error!(
+            task_uid,
+            elapsed_ms,
+            label,
+            error_code = ?content.error.error_code,
+            error_type = ?content.error.error_type,
+            error_message = %content.error.error_message,
+            error_link = %content.error.error_link,
+            "task failed"
+        );
         bail!("task {task_uid} failed");
     }
 
@@ -527,8 +657,8 @@ fn build_index_settings(settings: &MeilisearchSettingsConfig) -> Settings {
         .with_sortable_attributes(settings.sortable_attributes.clone())
 }
 
-fn validate_attr_list(label: &str, values: &[String]) -> Result<()> {
-    if values.is_empty() {
+fn validate_attr_list(label: &str, values: &[String], allow_empty: bool) -> Result<()> {
+    if values.is_empty() && !allow_empty {
         bail!("meilisearch settings {label} cannot be empty");
     }
     let mut seen = std::collections::BTreeSet::new();
@@ -542,6 +672,27 @@ fn validate_attr_list(label: &str, values: &[String]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn load_settings_file(path: &std::path::Path) -> Result<MeilisearchSettingsConfig> {
+    #[derive(serde::Deserialize)]
+    struct SettingsFile {
+        meilisearch: Option<SettingsFileMeili>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct SettingsFileMeili {
+        settings: Option<MeilisearchSettingsConfig>,
+    }
+
+    let raw = std::fs::read_to_string(path)
+        .with_context(|| format!("read settings file {}", path.display()))?;
+    let parsed: SettingsFile = toml::from_str(&raw)
+        .with_context(|| format!("parse settings TOML {}", path.display()))?;
+    parsed
+        .meilisearch
+        .and_then(|m| m.settings)
+        .ok_or_else(|| anyhow!("settings file missing [meilisearch.settings]"))
 }
 
 fn jitter_ms() -> u64 {
@@ -724,6 +875,7 @@ fn collect_input(args: &MeilisearchArgs, cfg: &Config) -> Result<ParsedInput> {
             .with_context(|| format!("read ndjson input {}", path.display()))?;
         let mut docs = Vec::new();
         let mut err_count = 0usize;
+        let mut summary_stats: Option<Stats> = None;
         for (line_no, line) in raw.lines().enumerate() {
             let line = line.trim();
             if line.is_empty() {
@@ -743,6 +895,15 @@ fn collect_input(args: &MeilisearchArgs, cfg: &Config) -> Result<ParsedInput> {
                     continue;
                 }
                 if kind == "summary" {
+                    if let Some(data) = value.get("data") {
+                        match serde_json::from_value::<Stats>(data.clone()) {
+                            Ok(stats) => summary_stats = Some(stats),
+                            Err(err) => {
+                                warn!(line = line_no + 1, error = %err, "invalid summary stats");
+                                err_count += 1;
+                            }
+                        }
+                    }
                     continue;
                 }
             }
@@ -754,11 +915,11 @@ fn collect_input(args: &MeilisearchArgs, cfg: &Config) -> Result<ParsedInput> {
                 }
             }
         }
-        let stats = Stats {
+        let stats = summary_stats.unwrap_or(Stats {
             input_count: docs.len() + err_count,
             parsed_ok: docs.len(),
             parsed_err: err_count,
-        };
+        });
         return Ok(ParsedInput {
             documents: docs,
             stats,
@@ -808,7 +969,10 @@ async fn apply_settings_only(settings: &ResolvedMeilisearch) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{ParsedDocument, ReleaseMeta, SourceInfo};
+    use crate::model::{OutputBundle, ParsedDocument, ReleaseMeta, SourceInfo, ToolInfo};
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn map_document_uses_source_sha256_for_id() {
@@ -857,6 +1021,12 @@ mod tests {
     }
 
     #[test]
+    fn slugify_title_symbols_only_returns_none() {
+        let value = slugify_title("!!!");
+        assert!(value.is_none());
+    }
+
+    #[test]
     fn id_strategy_uses_canonical_when_available() {
         let doc = ParsedDocument {
             source: SourceInfo {
@@ -883,5 +1053,153 @@ mod tests {
         };
         let mapped = map_document(&doc, MeilisearchIdStrategy::CanonicalUrl);
         assert_eq!(mapped.id, "https://example.com/game");
+    }
+
+    #[test]
+    fn id_strategy_falls_back_to_sha256() {
+        let doc = ParsedDocument {
+            source: SourceInfo {
+                path: "tmp/sample.html".to_string(),
+                bytes: 0,
+                sha256: "abc123".to_string(),
+            },
+            site: "generic".to_string(),
+            poster: None,
+            page: None,
+            post: None,
+            release: None,
+            spoiler_sections: vec![],
+            link_domain_counts: Default::default(),
+            download_section_headings: vec![],
+            torrent_file: None,
+            torrent_file_names: vec![],
+            torrent_file_links: vec![],
+            magnet_links: vec![],
+        };
+        let mapped = map_document(&doc, MeilisearchIdStrategy::TitleSlug);
+        assert_eq!(mapped.id, "abc123");
+    }
+
+    #[test]
+    fn collect_input_reads_json_bundle() {
+        let path = write_temp_file("bundle.json", &sample_bundle_json());
+        let args = base_args().with_from_json(path.clone());
+        let cfg = Config::default();
+        let input = collect_input(&args, &cfg).expect("collect input");
+        assert_eq!(input.documents.len(), 1);
+        assert_eq!(input.stats.parsed_ok, 1);
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn collect_input_reads_ndjson_with_errors() {
+        let path = write_temp_file(
+            "bundle.ndjson",
+            &format!(
+                "{}\n{{invalid}}\n{{\"type\":\"summary\",\"data\":{{\"input_count\":2,\"parsed_ok\":1,\"parsed_err\":1}}}}\n",
+                serde_json::to_string(&sample_doc()).unwrap()
+            ),
+        );
+        let args = base_args().with_from_ndjson(path.clone());
+        let cfg = Config::default();
+        let input = collect_input(&args, &cfg).expect("collect input");
+        assert_eq!(input.documents.len(), 1);
+        assert_eq!(input.stats.parsed_err, 1);
+        std::fs::remove_file(path).ok();
+    }
+
+    fn base_args() -> MeilisearchArgs {
+        MeilisearchArgs {
+            inputs: vec![],
+            recursive: false,
+            follow_symlinks: false,
+            mode: None,
+            host: None,
+            index: None,
+            api_key: None,
+            primary_key: None,
+            id_strategy: None,
+            batch_size: None,
+            timeout_secs: None,
+            apply_settings: false,
+            dry_run: false,
+            from_json: None,
+            from_ndjson: None,
+            stats_only: false,
+            settings_only: false,
+            sample: None,
+            fail_fast: false,
+            max_in_flight: None,
+            settings_file: None,
+        }
+    }
+
+    trait ArgsExt {
+        fn with_from_json(self, path: PathBuf) -> Self;
+        fn with_from_ndjson(self, path: PathBuf) -> Self;
+    }
+
+    impl ArgsExt for MeilisearchArgs {
+        fn with_from_json(mut self, path: PathBuf) -> Self {
+            self.from_json = Some(path);
+            self
+        }
+
+        fn with_from_ndjson(mut self, path: PathBuf) -> Self {
+            self.from_ndjson = Some(path);
+            self
+        }
+    }
+
+    fn sample_doc() -> ParsedDocument {
+        ParsedDocument {
+            source: SourceInfo {
+                path: "tmp/sample.html".to_string(),
+                bytes: 0,
+                sha256: "abc123".to_string(),
+            },
+            site: "generic".to_string(),
+            poster: None,
+            page: None,
+            post: None,
+            release: None,
+            spoiler_sections: vec![],
+            link_domain_counts: Default::default(),
+            download_section_headings: vec![],
+            torrent_file: None,
+            torrent_file_names: vec![],
+            torrent_file_links: vec![],
+            magnet_links: vec![],
+        }
+    }
+
+    fn sample_bundle_json() -> String {
+        let bundle = OutputBundle {
+            tool: ToolInfo {
+                name: "game-scraper".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            stats: Stats {
+                input_count: 1,
+                parsed_ok: 1,
+                parsed_err: 0,
+            },
+            documents: vec![sample_doc()],
+            errors: vec![],
+        };
+        serde_json::to_string(&bundle).unwrap()
+    }
+
+    fn write_temp_file(name: &str, contents: &str) -> PathBuf {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let nonce = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let mut path = std::env::temp_dir();
+        path.push(format!("game_scraper_{now}_{nonce}_{name}"));
+        std::fs::write(&path, contents).expect("write temp file");
+        path
     }
 }

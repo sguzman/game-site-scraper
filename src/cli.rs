@@ -76,7 +76,11 @@ pub struct CompletionsArgs {
 
 #[derive(Args, Debug)]
 pub struct MeilisearchArgs {
-    #[arg(value_name = "INPUT", required = true)]
+    #[arg(
+        value_name = "INPUT",
+        num_args = 1..,
+        required_unless_present_any = ["from_json", "from_ndjson", "settings_only"]
+    )]
     pub inputs: Vec<PathBuf>,
 
     #[arg(short, long)]
@@ -115,20 +119,40 @@ pub struct MeilisearchArgs {
     #[arg(long)]
     pub dry_run: bool,
 
-    #[arg(long, value_name = "PATH")]
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Parse from JSON bundle or array; INPUT args are ignored",
+        conflicts_with_all = ["from_ndjson"]
+    )]
     pub from_json: Option<PathBuf>,
 
-    #[arg(long, value_name = "PATH")]
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Parse from NDJSON; INPUT args are ignored",
+        conflicts_with_all = ["from_json"]
+    )]
     pub from_ndjson: Option<PathBuf>,
 
     #[arg(long)]
     pub stats_only: bool,
 
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["from_json", "from_ndjson", "dry_run", "stats_only"])]
     pub settings_only: bool,
 
     #[arg(long, value_name = "N")]
     pub sample: Option<usize>,
+
+    #[arg(long)]
+    pub fail_fast: bool,
+
+    #[arg(long, value_name = "N")]
+    pub max_in_flight: Option<usize>,
+
+    #[arg(long, value_name = "PATH")]
+    #[arg(help = "Load settings from a TOML file with [meilisearch.settings]")]
+    pub settings_file: Option<PathBuf>,
 }
 
 #[derive(Copy, Clone, Debug, ValueEnum)]

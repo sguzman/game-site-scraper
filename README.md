@@ -109,6 +109,24 @@ Meilisearch dry run with sample documents:
 cargo run -- meilisearch tmp --recursive --config scrape.toml --dry-run --sample 3
 ```
 
+Meilisearch concurrent batches (limit in-flight):
+
+```bash
+cargo run -- meilisearch tmp --recursive --config scrape.toml --max-in-flight 4
+```
+
+Meilisearch fail-fast on first batch error:
+
+```bash
+cargo run -- meilisearch tmp --recursive --config scrape.toml --fail-fast
+```
+
+Meilisearch settings from file:
+
+```bash
+cargo run -- meilisearch tmp --recursive --config scrape.toml --settings-file docs/meili-settings.toml
+```
+
 Print effective config:
 
 ```bash
@@ -206,6 +224,15 @@ Config (`[meilisearch.settings]` in `scrape.toml`):
 - `filterable_attributes`
 - `sortable_attributes`
 
+Input precedence:
+
+- If `--from-json` or `--from-ndjson` is provided, positional `INPUT` arguments are ignored.
+
+JSON/NDJSON formats:
+
+- JSON: either a full output bundle (`tool/stats/documents/errors`) or a raw array of `ParsedDocument`.
+- NDJSON: one JSON document per line; `type: summary` and `type: error` lines are skipped.
+
 Integration test plan (local):
 
 1. Start Meilisearch with `tmp/docker-compose.yaml`.
@@ -221,6 +248,7 @@ Troubleshooting:
 - Task timeout: increase `timeout_secs` or set it to `0` to disable.
 - Settings not applied on existing index: enable `apply_settings_on_existing` or pass `--apply-settings`.
 - ID strategy fallback: if canonical/title slug is missing, the ID falls back to SHA-256.
+- NDJSON errors: invalid lines are skipped and counted in `parsed_err`.
 
 ## Notes
 

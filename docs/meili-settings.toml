@@ -1,0 +1,22 @@
+[meilisearch.settings]
+displayed_attributes = [
+  "poster",
+  "title",
+  "site",
+  "source_path",
+  "canonical_url",
+  "categories",
+  "wp_tags",
+  "genres",
+  "companies",
+  "languages_raw",
+  "original_size_raw",
+  "repack_size_raw",
+  "release_number",
+  "entry_datetime",
+  "author",
+  "torrent_file",
+]
+searchable_attributes = ["title", "categories", "wp_tags", "genres", "companies", "languages_raw"]
+filterable_attributes = ["categories", "wp_tags", "genres", "companies", "languages_raw"]
+sortable_attributes = ["release_number", "entry_datetime"]

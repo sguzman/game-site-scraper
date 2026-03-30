@@ -276,3 +276,36 @@ Add parsing mechanics to extract the FitGirl game cover image URL from the saved
 - [x] Add settings-only apply flow with runtime
 - [x] Add JSON/NDJSON warnings on bad lines
 - [x] Ensure stats-only skips mapping/indexing
+
+## Batch 5 (30 Items)
+
+- [x] Add CLI `--fail-fast` flag
+- [x] Add CLI `--max-in-flight` for concurrent batches
+- [x] Add CLI `--settings-file` for external settings TOML
+- [x] Allow `INPUT` to be omitted when using `--from-json/--from-ndjson/--settings-only`
+- [x] Add input precedence help text for JSON/NDJSON
+- [x] Document JSON/NDJSON formats in README
+- [x] Capture NDJSON summary stats when present
+- [x] Allow empty `sortable_attributes` in settings validation
+- [x] Log Meilisearch task error details (code/type/message/link)
+- [x] Show sample documents in stats-only mode
+- [x] Clamp sample size to available documents
+- [x] Log counts even when dry-run/stat-only sees zero docs
+- [x] Log `id_strategy` per batch
+- [x] Add tests for slugify symbols-only input
+- [x] Add tests for ID strategy fallback to SHA-256
+- [x] Add tests for JSON bundle parsing
+- [x] Add tests for NDJSON parsing with errors
+- [x] Add settings-file example at `docs/meili-settings.toml`
+- [x] Add concurrent batch submission with JoinSet
+- [x] Add fail-fast behavior for concurrent batches
+- [x] Add settings-only conflicts via clap
+- [x] Log settings-file path when loaded
+- [x] Warn on invalid NDJSON summary stats
+- [x] Add README examples for `--fail-fast` and `--max-in-flight`
+- [x] Add README example for `--settings-file`
+- [x] Add README input precedence note
+- [x] Add README note for NDJSON errors counted
+- [x] Add per-batch first/last ID logging (already in batch log)
+- [x] Add stats-only/dry-run no-docs summary logging
+- [x] Add `tmp/index-smoke.sh` helper script

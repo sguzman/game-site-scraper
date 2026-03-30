@@ -148,33 +148,33 @@ Add parsing mechanics to extract the FitGirl game cover image URL from the saved
 
 ## Batch 1 (30 Items)
 
-- [ ] Decide which Meilisearch Rust SDK/version to use
-- [ ] Add `[meilisearch]` to default `scrape.toml`
-- [ ] Extend config structs with Meilisearch settings
-- [ ] Add config validation for required settings per mode
-- [ ] Decide final CLI subcommand name and structure
-- [ ] Add `--mode` override flag for `upsert|clean-insert`
-- [ ] Add `--host` override flag
-- [ ] Add `--index` override flag
-- [ ] Add `--api-key` override flag (with redaction in logs)
-- [ ] Add `--batch-size` override flag
-- [ ] Implement a Meilisearch client wrapper module
-- [ ] Implement index create with explicit primary key
-- [ ] Implement index delete
-- [ ] Implement index existence check
-- [ ] Implement upsert mode flow
-- [ ] Implement clean-insert mode flow
-- [ ] Implement batched document submission
-- [ ] Implement task polling with timeout
-- [ ] Add retry/backoff for transient HTTP errors
-- [ ] Add document-mapper with stable `id`
-- [ ] Add cover image extraction to parser
-- [ ] Add `poster` field to Meili document
-- [ ] Ensure `poster` is the first image-like URL for mini-dashboard
-- [ ] Normalize cover image URL to absolute
-- [ ] Add unit tests for `id` mapping
-- [ ] Add unit tests for cover image extraction
-- [ ] Add integration test plan for local Meilisearch
-- [ ] Update README with Meilisearch usage
-- [ ] Add troubleshooting section (auth/index/payload)
-- [ ] Add log events for task UIDs and durations
+- [x] Decide which Meilisearch Rust SDK/version to use
+- [x] Add `[meilisearch]` to default `scrape.toml`
+- [x] Extend config structs with Meilisearch settings
+- [x] Add config validation for required settings per mode
+- [x] Decide final CLI subcommand name and structure
+- [x] Add `--mode` override flag for `upsert|clean-insert`
+- [x] Add `--host` override flag
+- [x] Add `--index` override flag
+- [x] Add `--api-key` override flag (with redaction in logs)
+- [x] Add `--batch-size` override flag
+- [x] Implement a Meilisearch client wrapper module
+- [x] Implement index create with explicit primary key
+- [x] Implement index delete
+- [x] Implement index existence check
+- [x] Implement upsert mode flow
+- [x] Implement clean-insert mode flow
+- [x] Implement batched document submission
+- [x] Implement task polling with timeout
+- [x] Add retry/backoff for transient HTTP errors
+- [x] Add document-mapper with stable `id`
+- [x] Add cover image extraction to parser
+- [x] Add `poster` field to Meili document
+- [x] Ensure `poster` is the first image-like URL for mini-dashboard
+- [x] Normalize cover image URL to absolute
+- [x] Add unit tests for `id` mapping
+- [x] Add unit tests for cover image extraction
+- [x] Add integration test plan for local Meilisearch
+- [x] Update README with Meilisearch usage
+- [x] Add troubleshooting section (auth/index/payload)
+- [x] Add log events for task UIDs and durations

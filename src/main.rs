@@ -4,6 +4,7 @@ mod cli;
 mod config;
 mod fs;
 mod model;
+mod output;
 mod parser;
 
 use anyhow::{Context, Result};
@@ -12,6 +13,16 @@ use std::io::Write;
 use tracing::{info, warn};
 
 fn main() -> Result<()> {
+    if let Err(err) = run() {
+        if is_broken_pipe(&err) {
+            return Ok(());
+        }
+        return Err(err);
+    }
+    Ok(())
+}
+
+fn run() -> Result<()> {
     let cli = cli::Cli::parse();
 
     cli::init_tracing(&cli).context("init tracing")?;
@@ -59,6 +70,7 @@ fn main() -> Result<()> {
                     write_output(
                         &mut out,
                         &bundle,
+                        cfg.output.include_nulls,
                         args.pretty || cfg.output.pretty_json,
                         use_ndjson,
                     )?;
@@ -70,6 +82,7 @@ fn main() -> Result<()> {
                     write_output(
                         &mut out,
                         &bundle,
+                        cfg.output.include_nulls,
                         args.pretty || cfg.output.pretty_json,
                         use_ndjson,
                     )?;
@@ -82,15 +95,28 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+fn is_broken_pipe(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::BrokenPipe)
+    })
+}
+
 fn write_output<W: Write>(
     out: &mut W,
     bundle: &model::OutputBundle,
+    include_nulls: bool,
     pretty_json: bool,
     ndjson: bool,
 ) -> Result<()> {
     if ndjson {
         for doc in &bundle.documents {
-            let line = serde_json::to_string(doc)?;
+            let line = if include_nulls {
+                serde_json::to_string(&output::ParsedDocumentWithNulls::from(doc))?
+            } else {
+                serde_json::to_string(doc)?
+            };
             out.write_all(line.as_bytes())?;
             out.write_all(b"\n")?;
         }
@@ -113,7 +139,14 @@ fn write_output<W: Write>(
         return Ok(());
     }
 
-    let json = if pretty_json {
+    let json = if include_nulls {
+        let bundle = output::OutputBundleWithNulls::from(bundle);
+        if pretty_json {
+            serde_json::to_string_pretty(&bundle)?
+        } else {
+            serde_json::to_string(&bundle)?
+        }
+    } else if pretty_json {
         serde_json::to_string_pretty(bundle)?
     } else {
         serde_json::to_string(bundle)?

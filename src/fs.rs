@@ -1,8 +1,19 @@
 use anyhow::{Context, Result};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use tracing::{debug, instrument, trace};
 use walkdir::WalkDir;
 
+#[instrument(
+    level = "debug",
+    skip_all,
+    fields(
+        input_count = inputs.len(),
+        recursive,
+        follow_symlinks,
+        output_count = tracing::field::Empty
+    )
+)]
 pub fn collect_html_inputs(
     inputs: &[PathBuf],
     recursive: bool,
@@ -11,9 +22,13 @@ pub fn collect_html_inputs(
     let mut out: BTreeSet<PathBuf> = BTreeSet::new();
 
     for p in inputs {
+        trace!(path = %p.display(), "considering input");
         if p.is_file() {
             if is_html(p) {
+                trace!(path = %p.display(), "adding html file");
                 out.insert(p.clone());
+            } else {
+                trace!(path = %p.display(), "skipping non-html file");
             }
             continue;
         }
@@ -40,7 +55,10 @@ pub fn collect_html_inputs(
         }
     }
 
-    Ok(out.into_iter().collect())
+    let out: Vec<PathBuf> = out.into_iter().collect();
+    tracing::Span::current().record("output_count", out.len());
+    debug!(count = out.len(), "collected html inputs");
+    Ok(out)
 }
 
 fn is_html(path: &Path) -> bool {

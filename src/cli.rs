@@ -102,8 +102,8 @@ pub enum LogFormat {
 }
 
 pub fn init_tracing(cli: &Cli) -> Result<()> {
-    let filter =
-        EnvFilter::try_new(cli.log_level.clone()).unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter_str = normalize_log_filter(&cli.log_level);
+    let filter = EnvFilter::try_new(filter_str).unwrap_or_else(|_| EnvFilter::new("info"));
     let ansi = !cli.no_color;
 
     match cli.log_format {
@@ -111,6 +111,7 @@ pub fn init_tracing(cli: &Cli) -> Result<()> {
             tracing_subscriber::fmt()
                 .with_env_filter(filter)
                 .with_ansi(ansi)
+                .with_writer(std::io::stderr)
                 .compact()
                 .init();
         }
@@ -118,6 +119,7 @@ pub fn init_tracing(cli: &Cli) -> Result<()> {
             tracing_subscriber::fmt()
                 .with_env_filter(filter)
                 .with_ansi(ansi)
+                .with_writer(std::io::stderr)
                 .json()
                 .init();
         }
@@ -130,4 +132,19 @@ pub fn print_completions(shell: ShellArg) {
     let mut cmd = Cli::command();
     let shell: Shell = shell.into();
     generate(shell, &mut cmd, "game-scraper", &mut std::io::stdout());
+}
+
+fn normalize_log_filter(input: &str) -> String {
+    let level = input.trim().to_ascii_lowercase();
+    let is_simple_level = matches!(
+        level.as_str(),
+        "error" | "warn" | "info" | "debug" | "trace"
+    );
+    let looks_like_filter = input.contains('=') || input.contains(',');
+
+    if is_simple_level && !looks_like_filter {
+        format!("warn,game_scraper={level}")
+    } else {
+        input.to_string()
+    }
 }

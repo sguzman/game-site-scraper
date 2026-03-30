@@ -185,6 +185,10 @@ pub fn parse_wordpress_release(html: &str, cfg: &Config) -> Result<ParsedDocumen
 
     if cfg.scrape.spoiler_sections {
         out.spoiler_sections = extract_spoilers(&doc, &cfg.profile.spoiler_denylist);
+        debug!(
+            count = out.spoiler_sections.len(),
+            "extracted spoiler sections"
+        );
     }
 
     if cfg.scrape.download_section_presence {
@@ -196,6 +200,10 @@ pub fn parse_wordpress_release(html: &str, cfg: &Config) -> Result<ParsedDocumen
 
     if cfg.links.domain_counts {
         out.link_domain_counts = extract_domain_counts(&doc, cfg.links.ignore_magnet);
+        debug!(
+            distinct_domains = out.link_domain_counts.len(),
+            "extracted link domain counts"
+        );
     }
 
     if cfg.scrape.torrent_file
@@ -216,6 +224,12 @@ pub fn parse_wordpress_release(html: &str, cfg: &Config) -> Result<ParsedDocumen
         if cfg.scrape.magnet {
             out.magnet_links = extracted.magnet_links;
         }
+
+        debug!(
+            torrent_link_count = out.torrent_file_links.len(),
+            magnet_link_count = out.magnet_links.len(),
+            "extracted torrent/magnet links"
+        );
     }
 
     Ok(out)
@@ -266,6 +280,10 @@ pub fn parse_generic(html: &str, cfg: &Config) -> Result<ParsedDocument> {
 
     if cfg.links.domain_counts {
         out.link_domain_counts = extract_domain_counts(&doc, cfg.links.ignore_magnet);
+        debug!(
+            distinct_domains = out.link_domain_counts.len(),
+            "extracted link domain counts"
+        );
     }
 
     if cfg.scrape.torrent_file
@@ -286,6 +304,12 @@ pub fn parse_generic(html: &str, cfg: &Config) -> Result<ParsedDocument> {
         if cfg.scrape.magnet {
             out.magnet_links = extracted.magnet_links;
         }
+
+        debug!(
+            torrent_link_count = out.torrent_file_links.len(),
+            magnet_link_count = out.magnet_links.len(),
+            "extracted torrent/magnet links"
+        );
     }
 
     Ok(out)

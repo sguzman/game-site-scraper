@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use tracing::{debug, instrument};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
@@ -12,16 +13,20 @@ pub struct Config {
 }
 
 impl Config {
+    #[instrument(level = "debug", skip_all, fields(path = path.map(|p| p.display().to_string())))]
     pub fn load(path: Option<&Path>) -> Result<Self> {
         let mut cfg = Config::default();
 
         if let Some(path) = path {
             if path.exists() {
+                debug!(path = %path.display(), "loading config");
                 let raw = std::fs::read_to_string(path)
                     .with_context(|| format!("read config {}", path.display()))?;
                 let parsed: Config = toml::from_str(&raw)
                     .with_context(|| format!("parse TOML {}", path.display()))?;
                 cfg = parsed;
+            } else {
+                debug!(path = %path.display(), "config file not found; using defaults");
             }
         }
 

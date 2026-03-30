@@ -172,6 +172,7 @@ impl Default for MeilisearchMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct MeilisearchConfig {
     pub host: String,
     pub api_key: Option<String>,
@@ -180,6 +181,8 @@ pub struct MeilisearchConfig {
     pub batch_size: usize,
     pub timeout_secs: u64,
     pub mode: MeilisearchMode,
+    pub apply_settings_on_existing: bool,
+    pub settings: MeilisearchSettingsConfig,
 }
 
 impl Default for MeilisearchConfig {
@@ -192,6 +195,61 @@ impl Default for MeilisearchConfig {
             batch_size: 1000,
             timeout_secs: 120,
             mode: MeilisearchMode::Upsert,
+            apply_settings_on_existing: false,
+            settings: MeilisearchSettingsConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MeilisearchSettingsConfig {
+    pub displayed_attributes: Vec<String>,
+    pub searchable_attributes: Vec<String>,
+    pub filterable_attributes: Vec<String>,
+    pub sortable_attributes: Vec<String>,
+}
+
+impl Default for MeilisearchSettingsConfig {
+    fn default() -> Self {
+        Self {
+            displayed_attributes: vec![
+                "poster".to_string(),
+                "title".to_string(),
+                "site".to_string(),
+                "source_path".to_string(),
+                "canonical_url".to_string(),
+                "categories".to_string(),
+                "wp_tags".to_string(),
+                "genres".to_string(),
+                "companies".to_string(),
+                "languages_raw".to_string(),
+                "original_size_raw".to_string(),
+                "repack_size_raw".to_string(),
+                "release_number".to_string(),
+                "entry_datetime".to_string(),
+                "author".to_string(),
+                "torrent_file".to_string(),
+            ],
+            searchable_attributes: vec![
+                "title".to_string(),
+                "categories".to_string(),
+                "wp_tags".to_string(),
+                "genres".to_string(),
+                "companies".to_string(),
+                "languages_raw".to_string(),
+            ],
+            filterable_attributes: vec![
+                "categories".to_string(),
+                "wp_tags".to_string(),
+                "genres".to_string(),
+                "companies".to_string(),
+                "languages_raw".to_string(),
+            ],
+            sortable_attributes: vec![
+                "release_number".to_string(),
+                "entry_datetime".to_string(),
+            ],
         }
     }
 }
@@ -255,4 +313,28 @@ primary_key = "id"
 batch_size = 1000
 timeout_secs = 120
 mode = "upsert"
+apply_settings_on_existing = false
+
+[meilisearch.settings]
+displayed_attributes = [
+  "poster",
+  "title",
+  "site",
+  "source_path",
+  "canonical_url",
+  "categories",
+  "wp_tags",
+  "genres",
+  "companies",
+  "languages_raw",
+  "original_size_raw",
+  "repack_size_raw",
+  "release_number",
+  "entry_datetime",
+  "author",
+  "torrent_file",
+]
+searchable_attributes = ["title", "categories", "wp_tags", "genres", "companies", "languages_raw"]
+filterable_attributes = ["categories", "wp_tags", "genres", "companies", "languages_raw"]
+sortable_attributes = ["release_number", "entry_datetime"]
 "#;

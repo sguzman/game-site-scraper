@@ -1,5 +1,5 @@
 use crate::cli::{MeilisearchArgs, MeilisearchModeArg};
-use crate::config::{Config, MeilisearchMode};
+use crate::config::{Config, MeilisearchMode, MeilisearchSettingsConfig};
 use crate::fs;
 use crate::model::ParsedDocument;
 use crate::parser;
@@ -26,6 +26,9 @@ struct ResolvedMeilisearch {
     batch_size: usize,
     timeout_secs: u64,
     mode: MeilisearchMode,
+    apply_settings_on_existing: bool,
+    settings: MeilisearchSettingsConfig,
+    dry_run: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -78,7 +81,22 @@ pub fn run(args: &MeilisearchArgs, cfg: &Config) -> Result<()> {
         return Ok(());
     }
 
-    info!(count = documents.len(), "prepared documents for indexing");
+    info!(
+        count = documents.len(),
+        parsed_ok = bundle.stats.parsed_ok,
+        parsed_err = bundle.stats.parsed_err,
+        "prepared documents for indexing"
+    );
+
+    if settings.dry_run {
+        info!(
+            parsed_ok = bundle.stats.parsed_ok,
+            parsed_err = bundle.stats.parsed_err,
+            indexed_count = documents.len(),
+            "dry run enabled; skipping indexing"
+        );
+        return Ok(());
+    }
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -86,6 +104,13 @@ pub fn run(args: &MeilisearchArgs, cfg: &Config) -> Result<()> {
         .context("build tokio runtime")?;
 
     runtime.block_on(async { run_indexing(&settings, &documents).await })?;
+
+    info!(
+        parsed_ok = bundle.stats.parsed_ok,
+        parsed_err = bundle.stats.parsed_err,
+        indexed_count = documents.len(),
+        "meilisearch summary"
+    );
 
     Ok(())
 }
@@ -99,6 +124,9 @@ fn resolve_settings(args: &MeilisearchArgs, cfg: &Config) -> Result<ResolvedMeil
         batch_size: cfg.meilisearch.batch_size,
         timeout_secs: cfg.meilisearch.timeout_secs,
         mode: cfg.meilisearch.mode,
+        apply_settings_on_existing: cfg.meilisearch.apply_settings_on_existing,
+        settings: cfg.meilisearch.settings.clone(),
+        dry_run: false,
     };
 
     if let Some(host) = &args.host {
@@ -113,6 +141,10 @@ fn resolve_settings(args: &MeilisearchArgs, cfg: &Config) -> Result<ResolvedMeil
         debug!("overriding meilisearch api key");
         settings.api_key = Some(api_key.clone());
     }
+    if let Some(primary_key) = &args.primary_key {
+        debug!(override_value = %primary_key, "overriding meilisearch primary key");
+        settings.primary_key = primary_key.clone();
+    }
     if let Some(batch_size) = args.batch_size {
         debug!(override_value = batch_size, "overriding meilisearch batch size");
         settings.batch_size = batch_size;
@@ -120,6 +152,14 @@ fn resolve_settings(args: &MeilisearchArgs, cfg: &Config) -> Result<ResolvedMeil
     if let Some(timeout_secs) = args.timeout_secs {
         debug!(override_value = timeout_secs, "overriding meilisearch timeout");
         settings.timeout_secs = timeout_secs;
+    }
+    if args.apply_settings {
+        settings.apply_settings_on_existing = true;
+        debug!("overriding apply_settings_on_existing to true");
+    }
+    if args.dry_run {
+        settings.dry_run = true;
+        debug!("dry run enabled via CLI");
     }
     if let Some(mode) = args.mode {
         settings.mode = match mode {
@@ -149,6 +189,8 @@ fn resolve_settings(args: &MeilisearchArgs, cfg: &Config) -> Result<ResolvedMeil
         batch_size = settings.batch_size,
         timeout_secs = settings.timeout_secs,
         primary_key = %settings.primary_key,
+        apply_settings_on_existing = settings.apply_settings_on_existing,
+        dry_run = settings.dry_run,
         api_key_set = settings.api_key.is_some(),
         "resolved meilisearch config"
     );
@@ -169,6 +211,10 @@ fn validate_settings(settings: &ResolvedMeilisearch) -> Result<()> {
     if settings.batch_size == 0 {
         bail!("meilisearch batch size must be greater than zero");
     }
+    validate_attr_list("displayed_attributes", &settings.settings.displayed_attributes)?;
+    validate_attr_list("searchable_attributes", &settings.settings.searchable_attributes)?;
+    validate_attr_list("filterable_attributes", &settings.settings.filterable_attributes)?;
+    validate_attr_list("sortable_attributes", &settings.settings.sortable_attributes)?;
     Ok(())
 }
 
@@ -196,6 +242,10 @@ async fn run_indexing(settings: &ResolvedMeilisearch, documents: &[MeiliDocument
 async fn ensure_index(client: &Client, settings: &ResolvedMeilisearch) -> Result<()> {
     if index_exists(client, &settings.index_uid).await? {
         info!(index_uid = %settings.index_uid, "index already exists");
+        if settings.apply_settings_on_existing {
+            let index = client.index(&settings.index_uid);
+            apply_settings(client, &index, settings).await?;
+        }
         return Ok(());
     }
 
@@ -251,6 +301,7 @@ async fn submit_batches(
     for chunk in documents.chunks(settings.batch_size) {
         batch_num += 1;
         let batch_size = chunk.len();
+        let batch_start = Instant::now();
         info!(
             batch = batch_num,
             batch_size,
@@ -278,6 +329,13 @@ async fn submit_batches(
             &format!("batch_{batch_num}"),
         )
         .await?;
+
+        info!(
+            batch = batch_num,
+            batch_size,
+            elapsed_ms = batch_start.elapsed().as_millis(),
+            "batch completed"
+        );
     }
 
     Ok(())
@@ -288,7 +346,7 @@ async fn apply_settings(
     index: &meilisearch_sdk::indexes::Index,
     settings: &ResolvedMeilisearch,
 ) -> Result<()> {
-    let settings_payload = build_index_settings();
+    let settings_payload = build_index_settings(&settings.settings);
     info!(index_uid = %settings.index_uid, "applying index settings");
     let task = retry_meili("set_settings", || async {
         index.set_settings(&settings_payload).await
@@ -400,45 +458,41 @@ fn is_retryable(err: &MeiliError) -> bool {
 
 fn retry_delay(attempt: usize) -> Duration {
     let base = RETRY_BASE_DELAY_MS.saturating_mul(2_u64.saturating_pow(attempt as u32 - 1));
-    Duration::from_millis(base.min(5_000))
+    let jitter = jitter_ms();
+    Duration::from_millis(base.min(5_000).saturating_add(jitter))
 }
 
-fn build_index_settings() -> Settings {
+fn build_index_settings(settings: &MeilisearchSettingsConfig) -> Settings {
     Settings::new()
-        .with_displayed_attributes([
-            "poster",
-            "title",
-            "site",
-            "source_path",
-            "canonical_url",
-            "categories",
-            "wp_tags",
-            "genres",
-            "companies",
-            "languages_raw",
-            "original_size_raw",
-            "repack_size_raw",
-            "release_number",
-            "entry_datetime",
-            "author",
-            "torrent_file",
-        ])
-        .with_searchable_attributes([
-            "title",
-            "categories",
-            "wp_tags",
-            "genres",
-            "companies",
-            "languages_raw",
-        ])
-        .with_filterable_attributes([
-            "categories",
-            "wp_tags",
-            "genres",
-            "companies",
-            "languages_raw",
-        ])
-        .with_sortable_attributes(["release_number", "entry_datetime"])
+        .with_displayed_attributes(settings.displayed_attributes.clone())
+        .with_searchable_attributes(settings.searchable_attributes.clone())
+        .with_filterable_attributes(settings.filterable_attributes.clone())
+        .with_sortable_attributes(settings.sortable_attributes.clone())
+}
+
+fn validate_attr_list(label: &str, values: &[String]) -> Result<()> {
+    if values.is_empty() {
+        bail!("meilisearch settings {label} cannot be empty");
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for value in values {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            bail!("meilisearch settings {label} contains empty value");
+        }
+        if !seen.insert(trimmed.to_ascii_lowercase()) {
+            bail!("meilisearch settings {label} contains duplicate value: {trimmed}");
+        }
+    }
+    Ok(())
+}
+
+fn jitter_ms() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    now.subsec_millis() as u64 % 200
 }
 
 fn map_document(doc: &ParsedDocument) -> MeiliDocument {

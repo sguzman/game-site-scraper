@@ -97,11 +97,20 @@ pub struct MeilisearchArgs {
     #[arg(long, value_name = "KEY")]
     pub api_key: Option<String>,
 
+    #[arg(long, value_name = "KEY")]
+    pub primary_key: Option<String>,
+
     #[arg(long, value_name = "N")]
     pub batch_size: Option<usize>,
 
     #[arg(long, value_name = "SECS")]
     pub timeout_secs: Option<u64>,
+
+    #[arg(long)]
+    pub apply_settings: bool,
+
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 #[derive(Copy, Clone, Debug, ValueEnum)]

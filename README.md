@@ -61,6 +61,18 @@ Meilisearch clean insert (delete + recreate index):
 cargo run -- meilisearch tmp --recursive --config scrape.toml --mode clean-insert
 ```
 
+Meilisearch dry run (parse + summarize without indexing):
+
+```bash
+cargo run -- meilisearch tmp --recursive --config scrape.toml --dry-run
+```
+
+Meilisearch overrides (host/index/api key/primary key/settings apply):
+
+```bash
+cargo run -- meilisearch tmp --recursive --config scrape.toml --host http://127.0.0.1:7700 --index fitgirl-games --api-key masterKey --primary-key id --apply-settings
+```
+
 Print effective config:
 
 ```bash
@@ -148,6 +160,14 @@ Config (`[meilisearch]` in `scrape.toml`):
 - `batch_size`: docs per batch
 - `timeout_secs`: task wait timeout (0 disables timeout)
 - `mode`: `upsert` or `clean_insert`
+- `apply_settings_on_existing`: if true, re-apply settings when index already exists
+
+Config (`[meilisearch.settings]` in `scrape.toml`):
+
+- `displayed_attributes`
+- `searchable_attributes`
+- `filterable_attributes`
+- `sortable_attributes`
 
 Integration test plan (local):
 
@@ -162,6 +182,7 @@ Troubleshooting:
 - Index not found: check `index_uid` and host URL.
 - Payload too large: reduce `batch_size`.
 - Task timeout: increase `timeout_secs` or set it to `0` to disable.
+- Settings not applied on existing index: enable `apply_settings_on_existing` or pass `--apply-settings`.
 
 ## Notes
 

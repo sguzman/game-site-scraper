@@ -76,7 +76,7 @@ Meilisearch primary key inference can fail when multiple `*id` fields exist; avo
   - [x] Option A: `id = source.sha256` (stable and already computed)
   - [ ] Option B: `id = canonical_url` (if present) normalized
   - [ ] Option C: `id = slug(title)` (riskier unless guaranteed unique)
-- [x] Remove/rename conflicting `*id` attributes where helpful (e.g. `post.post_id` → `post.wordpress_post_id`) to reduce ambiguity and keep the schema clean
+- [ ] Remove/rename conflicting `*id` attributes where helpful (e.g. `post.post_id` → `post.wordpress_post_id`) to reduce ambiguity and keep the schema clean
 - [x] Ensure the final Meili document uses a flat, UI-friendly schema:
   - [x] `id` (primary key)
   - [x] `title` (best user-facing title)
@@ -210,3 +210,36 @@ Add parsing mechanics to extract the FitGirl game cover image URL from the saved
 - [x] Phase 3: normalize cover URLs to absolute
 - [x] Phase 4: apply index settings on create
 - [x] Phase 4: set displayed/searchable/filterable/sortable attributes
+
+## Batch 3 (30 Items)
+
+- [x] Add `[meilisearch.settings]` config table
+- [x] Define default settings arrays in config
+- [x] Add `apply_settings_on_existing` config flag
+- [x] Add CLI `--apply-settings` override
+- [x] Add CLI `--primary-key` override
+- [x] Add CLI `--dry-run` mode
+- [x] Build index settings from config lists
+- [x] Validate settings arrays are non-empty
+- [x] Validate settings arrays have no duplicates
+- [x] Log CLI override values for host/index/batch/timeout/mode
+- [x] Log primary key override and dry-run status
+- [x] Re-apply settings on existing index when enabled
+- [x] Add per-batch timing logs
+- [x] Add indexing summary log with parsed/errored/indexed counts
+- [x] Apply settings task logging
+- [x] Add jitter to retry backoff
+- [x] Update README with dry-run example
+- [x] Update README with override example
+- [x] Update README with settings config section
+- [x] Update README with apply settings troubleshooting note
+- [x] Update `scrape.toml` with settings table
+- [x] Update default config template with settings table
+- [x] Wire settings struct into Meilisearch config
+- [x] Add settings validation for empty values
+- [x] Emit batch elapsed time metrics
+- [x] Apply settings during index creation using configured lists
+- [x] Propagate apply-settings flag into resolved config
+- [x] Skip indexing when dry-run is enabled
+- [x] Add debug log for primary key override
+- [x] Add debug log for dry-run override

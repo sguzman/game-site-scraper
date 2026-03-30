@@ -1,7 +1,9 @@
-use crate::cli::{MeilisearchArgs, MeilisearchModeArg};
-use crate::config::{Config, MeilisearchMode, MeilisearchSettingsConfig};
+use crate::cli::{MeilisearchArgs, MeilisearchIdStrategyArg, MeilisearchModeArg};
+use crate::config::{
+    Config, MeilisearchIdStrategy, MeilisearchMode, MeilisearchSettingsConfig,
+};
 use crate::fs;
-use crate::model::ParsedDocument;
+use crate::model::{OutputBundle, ParsedDocument, Stats};
 use crate::parser;
 use anyhow::{anyhow, bail, Context, Result};
 use meilisearch_sdk::client::Client;
@@ -12,6 +14,7 @@ use meilisearch_sdk::tasks::Task;
 use serde::Serialize;
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info, instrument, warn};
+use url::Url;
 
 const TASK_POLL_INTERVAL_MS: u64 = 200;
 const RETRY_ATTEMPTS: usize = 3;
@@ -26,9 +29,13 @@ struct ResolvedMeilisearch {
     batch_size: usize,
     timeout_secs: u64,
     mode: MeilisearchMode,
+    id_strategy: MeilisearchIdStrategy,
     apply_settings_on_existing: bool,
     settings: MeilisearchSettingsConfig,
     dry_run: bool,
+    stats_only: bool,
+    settings_only: bool,
+    sample: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -55,46 +62,58 @@ struct MeiliDocument {
 pub fn run(args: &MeilisearchArgs, cfg: &Config) -> Result<()> {
     let settings = resolve_settings(args, cfg)?;
 
-    let files = fs::collect_html_inputs(&args.inputs, args.recursive, args.follow_symlinks)
-        .context("collect inputs")?;
-
-    if files.is_empty() {
-        warn!("no input HTML files found");
+    if settings.settings_only {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .context("build tokio runtime")?;
+        runtime.block_on(async { apply_settings_only(&settings).await })?;
         return Ok(());
     }
 
-    info!(count = files.len(), "collected input HTML files");
+    let input = collect_input(args, cfg)?;
 
-    let bundle = parser::parse_many(&files, cfg).context("parse inputs")?;
-
-    if !bundle.errors.is_empty() {
-        warn!(
-            error_count = bundle.errors.len(),
-            "some documents failed to parse; continuing with parsed documents"
-        );
-    }
-
-    let documents: Vec<MeiliDocument> = bundle.documents.iter().map(map_document).collect();
-
-    if documents.is_empty() {
+    if input.documents.is_empty() {
         warn!("no parsed documents to index");
         return Ok(());
     }
 
     info!(
-        count = documents.len(),
-        parsed_ok = bundle.stats.parsed_ok,
-        parsed_err = bundle.stats.parsed_err,
+        count = input.documents.len(),
+        parsed_ok = input.stats.parsed_ok,
+        parsed_err = input.stats.parsed_err,
         "prepared documents for indexing"
     );
 
+    if settings.stats_only {
+        info!(
+            parsed_ok = input.stats.parsed_ok,
+            parsed_err = input.stats.parsed_err,
+            indexed_count = input.documents.len(),
+            "stats-only enabled; skipping indexing"
+        );
+        return Ok(());
+    }
+
+    let documents: Vec<MeiliDocument> = input
+        .documents
+        .iter()
+        .map(|doc| map_document(doc, settings.id_strategy))
+        .collect();
+
     if settings.dry_run {
         info!(
-            parsed_ok = bundle.stats.parsed_ok,
-            parsed_err = bundle.stats.parsed_err,
+            parsed_ok = input.stats.parsed_ok,
+            parsed_err = input.stats.parsed_err,
             indexed_count = documents.len(),
             "dry run enabled; skipping indexing"
         );
+        if let Some(sample_size) = settings.sample {
+            let sample_size = sample_size.min(documents.len());
+            for (idx, doc) in documents.iter().take(sample_size).enumerate() {
+                info!(sample_index = idx + 1, document = ?doc, "sample document");
+            }
+        }
         return Ok(());
     }
 
@@ -106,8 +125,8 @@ pub fn run(args: &MeilisearchArgs, cfg: &Config) -> Result<()> {
     runtime.block_on(async { run_indexing(&settings, &documents).await })?;
 
     info!(
-        parsed_ok = bundle.stats.parsed_ok,
-        parsed_err = bundle.stats.parsed_err,
+        parsed_ok = input.stats.parsed_ok,
+        parsed_err = input.stats.parsed_err,
         indexed_count = documents.len(),
         "meilisearch summary"
     );
@@ -124,9 +143,13 @@ fn resolve_settings(args: &MeilisearchArgs, cfg: &Config) -> Result<ResolvedMeil
         batch_size: cfg.meilisearch.batch_size,
         timeout_secs: cfg.meilisearch.timeout_secs,
         mode: cfg.meilisearch.mode,
+        id_strategy: cfg.meilisearch.id_strategy,
         apply_settings_on_existing: cfg.meilisearch.apply_settings_on_existing,
         settings: cfg.meilisearch.settings.clone(),
         dry_run: false,
+        stats_only: false,
+        settings_only: false,
+        sample: None,
     };
 
     if let Some(host) = &args.host {
@@ -145,6 +168,14 @@ fn resolve_settings(args: &MeilisearchArgs, cfg: &Config) -> Result<ResolvedMeil
         debug!(override_value = %primary_key, "overriding meilisearch primary key");
         settings.primary_key = primary_key.clone();
     }
+    if let Some(strategy) = args.id_strategy {
+        settings.id_strategy = match strategy {
+            MeilisearchIdStrategyArg::Sha256 => MeilisearchIdStrategy::Sha256,
+            MeilisearchIdStrategyArg::CanonicalUrl => MeilisearchIdStrategy::CanonicalUrl,
+            MeilisearchIdStrategyArg::TitleSlug => MeilisearchIdStrategy::TitleSlug,
+        };
+        debug!(override_value = ?settings.id_strategy, "overriding id strategy");
+    }
     if let Some(batch_size) = args.batch_size {
         debug!(override_value = batch_size, "overriding meilisearch batch size");
         settings.batch_size = batch_size;
@@ -160,6 +191,18 @@ fn resolve_settings(args: &MeilisearchArgs, cfg: &Config) -> Result<ResolvedMeil
     if args.dry_run {
         settings.dry_run = true;
         debug!("dry run enabled via CLI");
+    }
+    if args.stats_only {
+        settings.stats_only = true;
+        debug!("stats-only enabled via CLI");
+    }
+    if args.settings_only {
+        settings.settings_only = true;
+        debug!("settings-only enabled via CLI");
+    }
+    if let Some(sample) = args.sample {
+        settings.sample = Some(sample);
+        debug!(override_value = sample, "setting sample size");
     }
     if let Some(mode) = args.mode {
         settings.mode = match mode {
@@ -189,8 +232,12 @@ fn resolve_settings(args: &MeilisearchArgs, cfg: &Config) -> Result<ResolvedMeil
         batch_size = settings.batch_size,
         timeout_secs = settings.timeout_secs,
         primary_key = %settings.primary_key,
+        id_strategy = ?settings.id_strategy,
         apply_settings_on_existing = settings.apply_settings_on_existing,
         dry_run = settings.dry_run,
+        stats_only = settings.stats_only,
+        settings_only = settings.settings_only,
+        sample = settings.sample.unwrap_or(0),
         api_key_set = settings.api_key.is_some(),
         "resolved meilisearch config"
     );
@@ -210,6 +257,12 @@ fn validate_settings(settings: &ResolvedMeilisearch) -> Result<()> {
     }
     if settings.batch_size == 0 {
         bail!("meilisearch batch size must be greater than zero");
+    }
+    if settings.settings_only && settings.dry_run {
+        bail!("cannot combine --settings-only with --dry-run");
+    }
+    if settings.settings_only && settings.stats_only {
+        bail!("cannot combine --settings-only with --stats-only");
     }
     validate_attr_list("displayed_attributes", &settings.settings.displayed_attributes)?;
     validate_attr_list("searchable_attributes", &settings.settings.searchable_attributes)?;
@@ -302,10 +355,14 @@ async fn submit_batches(
         batch_num += 1;
         let batch_size = chunk.len();
         let batch_start = Instant::now();
+        let batch_first = chunk.first().map(|doc| doc.id.as_str()).unwrap_or("");
+        let batch_last = chunk.last().map(|doc| doc.id.as_str()).unwrap_or("");
         info!(
             batch = batch_num,
             batch_size,
             total,
+            first_id = batch_first,
+            last_id = batch_last,
             "submitting document batch"
         );
 
@@ -495,7 +552,38 @@ fn jitter_ms() -> u64 {
     now.subsec_millis() as u64 % 200
 }
 
-fn map_document(doc: &ParsedDocument) -> MeiliDocument {
+fn normalize_canonical_url(raw: &str) -> Option<String> {
+    let mut url = Url::parse(raw).ok()?;
+    url.set_fragment(None);
+    let path = url.path().to_string();
+    if path.len() > 1 && path.ends_with('/') {
+        let trimmed = path.trim_end_matches('/');
+        url.set_path(trimmed);
+    }
+    Some(url.to_string())
+}
+
+fn slugify_title(title: &str) -> Option<String> {
+    let mut out = String::new();
+    let mut last_dash = false;
+    for ch in title.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+            last_dash = false;
+        } else if !last_dash {
+            out.push('-');
+            last_dash = true;
+        }
+    }
+    let trimmed = out.trim_matches('-');
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn map_document(doc: &ParsedDocument, strategy: MeilisearchIdStrategy) -> MeiliDocument {
     let title = doc
         .release
         .as_ref()
@@ -503,11 +591,42 @@ fn map_document(doc: &ParsedDocument) -> MeiliDocument {
         .or_else(|| doc.post.as_ref().and_then(|p| p.entry_title.clone()))
         .or_else(|| doc.page.as_ref().and_then(|p| p.title.clone()))
         .unwrap_or_default();
+    let mut id = match strategy {
+        MeilisearchIdStrategy::Sha256 => Some(doc.source.sha256.clone()),
+        MeilisearchIdStrategy::CanonicalUrl => doc
+            .page
+            .as_ref()
+            .and_then(|page| page.canonical_url.as_deref())
+            .and_then(normalize_canonical_url),
+        MeilisearchIdStrategy::TitleSlug => slugify_title(
+            doc.release
+                .as_ref()
+                .and_then(|r| r.game_title_line.as_deref())
+                .or_else(|| doc.post.as_ref().and_then(|p| p.entry_title.as_deref()))
+                .or_else(|| doc.page.as_ref().and_then(|p| p.title.as_deref()))
+                .unwrap_or(""),
+        ),
+    };
+
+    if id.is_none() {
+        debug!(
+            strategy = ?strategy,
+            fallback_id = %doc.source.sha256,
+            "id strategy fallback to sha256"
+        );
+        id = Some(doc.source.sha256.clone());
+    }
+
+    let poster = doc
+        .poster
+        .as_deref()
+        .and_then(validate_poster_url)
+        .map(|s| s.to_string());
 
     MeiliDocument {
-        id: doc.source.sha256.clone(),
+        id: id.unwrap_or_else(|| doc.source.sha256.clone()),
         title,
-        poster: doc.poster.clone(),
+        poster,
         site: doc.site.clone(),
         source_path: doc.source.path.clone(),
         canonical_url: doc.page.as_ref().and_then(|p| p.canonical_url.clone()),
@@ -556,6 +675,136 @@ fn map_document(doc: &ParsedDocument) -> MeiliDocument {
     }
 }
 
+fn validate_poster_url(url: &str) -> Option<&str> {
+    let url = url.trim();
+    if url.starts_with("http://") || url.starts_with("https://") {
+        Some(url)
+    } else {
+        None
+    }
+}
+
+struct ParsedInput {
+    documents: Vec<ParsedDocument>,
+    stats: Stats,
+}
+
+fn collect_input(args: &MeilisearchArgs, cfg: &Config) -> Result<ParsedInput> {
+    if args.from_json.is_some() && args.from_ndjson.is_some() {
+        bail!("cannot use --from-json and --from-ndjson together");
+    }
+
+    if let Some(path) = &args.from_json {
+        let raw = std::fs::read_to_string(path)
+            .with_context(|| format!("read json input {}", path.display()))?;
+        if let Ok(bundle) = serde_json::from_str::<OutputBundle>(&raw) {
+            if !bundle.errors.is_empty() {
+                warn!(
+                    error_count = bundle.errors.len(),
+                    "json input includes parse errors"
+                );
+            }
+            return Ok(ParsedInput {
+                documents: bundle.documents,
+                stats: bundle.stats,
+            });
+        }
+        let docs: Vec<ParsedDocument> =
+            serde_json::from_str(&raw).context("parse json input as documents")?;
+        let stats = Stats {
+            input_count: docs.len(),
+            parsed_ok: docs.len(),
+            parsed_err: 0,
+        };
+        return Ok(ParsedInput { documents: docs, stats });
+    }
+
+    if let Some(path) = &args.from_ndjson {
+        let raw = std::fs::read_to_string(path)
+            .with_context(|| format!("read ndjson input {}", path.display()))?;
+        let mut docs = Vec::new();
+        let mut err_count = 0usize;
+        for (line_no, line) in raw.lines().enumerate() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let value: serde_json::Value = match serde_json::from_str(line) {
+                Ok(v) => v,
+                Err(err) => {
+                    warn!(line = line_no + 1, error = %err, "invalid ndjson line");
+                    err_count += 1;
+                    continue;
+                }
+            };
+            if let Some(kind) = value.get("type").and_then(|v| v.as_str()) {
+                if kind == "error" {
+                    err_count += 1;
+                    continue;
+                }
+                if kind == "summary" {
+                    continue;
+                }
+            }
+            match serde_json::from_value::<ParsedDocument>(value) {
+                Ok(doc) => docs.push(doc),
+                Err(err) => {
+                    warn!(line = line_no + 1, error = %err, "invalid document in ndjson");
+                    err_count += 1;
+                }
+            }
+        }
+        let stats = Stats {
+            input_count: docs.len() + err_count,
+            parsed_ok: docs.len(),
+            parsed_err: err_count,
+        };
+        return Ok(ParsedInput {
+            documents: docs,
+            stats,
+        });
+    }
+
+    let files = fs::collect_html_inputs(&args.inputs, args.recursive, args.follow_symlinks)
+        .context("collect inputs")?;
+
+    if files.is_empty() {
+        warn!("no input HTML files found");
+        return Ok(ParsedInput {
+            documents: Vec::new(),
+            stats: Stats {
+                input_count: 0,
+                parsed_ok: 0,
+                parsed_err: 0,
+            },
+        });
+    }
+
+    info!(count = files.len(), "collected input HTML files");
+
+    let bundle = parser::parse_many(&files, cfg).context("parse inputs")?;
+    if !bundle.errors.is_empty() {
+        warn!(
+            error_count = bundle.errors.len(),
+            "some documents failed to parse; continuing with parsed documents"
+        );
+    }
+
+    Ok(ParsedInput {
+        documents: bundle.documents,
+        stats: bundle.stats,
+    })
+}
+
+async fn apply_settings_only(settings: &ResolvedMeilisearch) -> Result<()> {
+    let client = Client::new(&settings.host, settings.api_key.as_deref())
+        .map_err(|err| anyhow!("create meilisearch client: {err}"))?;
+    ensure_index(&client, settings).await?;
+    let index = client.index(&settings.index_uid);
+    apply_settings(&client, &index, settings).await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -591,7 +840,48 @@ mod tests {
             magnet_links: vec![],
         };
 
-        let mapped = map_document(&doc);
+        let mapped = map_document(&doc, MeilisearchIdStrategy::Sha256);
         assert_eq!(mapped.id, "abc123");
+    }
+
+    #[test]
+    fn normalize_canonical_removes_fragment_and_trailing_slash() {
+        let value = normalize_canonical_url("https://example.com/game/#section").unwrap();
+        assert_eq!(value, "https://example.com/game");
+    }
+
+    #[test]
+    fn slugify_title_basic() {
+        let value = slugify_title("A Plague Tale: Innocence").unwrap();
+        assert_eq!(value, "a-plague-tale-innocence");
+    }
+
+    #[test]
+    fn id_strategy_uses_canonical_when_available() {
+        let doc = ParsedDocument {
+            source: SourceInfo {
+                path: "tmp/sample.html".to_string(),
+                bytes: 0,
+                sha256: "abc123".to_string(),
+            },
+            site: "generic".to_string(),
+            poster: None,
+            page: Some(crate::model::PageMeta {
+                title: None,
+                canonical_url: Some("https://example.com/game/".to_string()),
+                meta: Default::default(),
+            }),
+            post: None,
+            release: None,
+            spoiler_sections: vec![],
+            link_domain_counts: Default::default(),
+            download_section_headings: vec![],
+            torrent_file: None,
+            torrent_file_names: vec![],
+            torrent_file_links: vec![],
+            magnet_links: vec![],
+        };
+        let mapped = map_document(&doc, MeilisearchIdStrategy::CanonicalUrl);
+        assert_eq!(mapped.id, "https://example.com/game");
     }
 }

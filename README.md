@@ -73,6 +73,42 @@ Meilisearch overrides (host/index/api key/primary key/settings apply):
 cargo run -- meilisearch tmp --recursive --config scrape.toml --host http://127.0.0.1:7700 --index fitgirl-games --api-key masterKey --primary-key id --apply-settings
 ```
 
+Meilisearch stats only (parse + counts, no mapping/indexing):
+
+```bash
+cargo run -- meilisearch tmp --recursive --config scrape.toml --stats-only
+```
+
+Meilisearch settings only (apply settings + exit):
+
+```bash
+cargo run -- meilisearch tmp --recursive --config scrape.toml --settings-only
+```
+
+Meilisearch id strategy override:
+
+```bash
+cargo run -- meilisearch tmp --recursive --config scrape.toml --id-strategy canonical-url
+```
+
+Meilisearch from JSON bundle:
+
+```bash
+cargo run -- meilisearch tmp --config scrape.toml --from-json out.json
+```
+
+Meilisearch from NDJSON:
+
+```bash
+cargo run -- meilisearch tmp --config scrape.toml --from-ndjson out.ndjson
+```
+
+Meilisearch dry run with sample documents:
+
+```bash
+cargo run -- meilisearch tmp --recursive --config scrape.toml --dry-run --sample 3
+```
+
 Print effective config:
 
 ```bash
@@ -161,6 +197,7 @@ Config (`[meilisearch]` in `scrape.toml`):
 - `timeout_secs`: task wait timeout (0 disables timeout)
 - `mode`: `upsert` or `clean_insert`
 - `apply_settings_on_existing`: if true, re-apply settings when index already exists
+- `id_strategy`: `sha256`, `canonical_url`, or `title_slug`
 
 Config (`[meilisearch.settings]` in `scrape.toml`):
 
@@ -183,6 +220,7 @@ Troubleshooting:
 - Payload too large: reduce `batch_size`.
 - Task timeout: increase `timeout_secs` or set it to `0` to disable.
 - Settings not applied on existing index: enable `apply_settings_on_existing` or pass `--apply-settings`.
+- ID strategy fallback: if canonical/title slug is missing, the ID falls back to SHA-256.
 
 ## Notes
 

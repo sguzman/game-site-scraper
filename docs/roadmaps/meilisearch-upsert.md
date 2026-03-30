@@ -243,3 +243,36 @@ Add parsing mechanics to extract the FitGirl game cover image URL from the saved
 - [x] Skip indexing when dry-run is enabled
 - [x] Add debug log for primary key override
 - [x] Add debug log for dry-run override
+
+## Batch 4 (30 Items)
+
+- [x] Add `id_strategy` to Meilisearch config
+- [x] Add `id_strategy` to default config template
+- [x] Add `id_strategy` to `scrape.toml`
+- [x] Add CLI `--id-strategy` override
+- [x] Implement canonical URL normalization helper
+- [x] Implement title slugify helper
+- [x] Add ID strategy selection in mapper
+- [x] Fallback to SHA-256 when ID strategy yields empty
+- [x] Validate poster URLs are http/https before indexing
+- [x] Add `--from-json` input support
+- [x] Add `--from-ndjson` input support
+- [x] Parse JSON bundle into documents + stats
+- [x] Parse NDJSON documents with error/summary skipping
+- [x] Add `--stats-only` mode
+- [x] Add `--settings-only` mode
+- [x] Add `--sample` for dry-run document preview
+- [x] Log parsed_ok/parsed_err with indexing prep
+- [x] Add summary log after indexing
+- [x] Add batch first/last ID logging
+- [x] Add batch elapsed time logging
+- [x] Add validation for mutually exclusive flags
+- [x] Add config defaults for settings tables when omitted
+- [x] Add tests for canonical normalization
+- [x] Add tests for slugify
+- [x] Add test for canonical ID strategy
+- [x] Update README with new CLI examples
+- [x] Update README with `id_strategy` description
+- [x] Add settings-only apply flow with runtime
+- [x] Add JSON/NDJSON warnings on bad lines
+- [x] Ensure stats-only skips mapping/indexing

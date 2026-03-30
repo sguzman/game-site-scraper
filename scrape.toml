@@ -49,6 +49,7 @@ primary_key = "id"
 batch_size = 1000
 timeout_secs = 120
 mode = "upsert"
+id_strategy = "sha256"
 apply_settings_on_existing = false
 
 [meilisearch.settings]

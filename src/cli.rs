@@ -100,6 +100,9 @@ pub struct MeilisearchArgs {
     #[arg(long, value_name = "KEY")]
     pub primary_key: Option<String>,
 
+    #[arg(long, value_enum)]
+    pub id_strategy: Option<MeilisearchIdStrategyArg>,
+
     #[arg(long, value_name = "N")]
     pub batch_size: Option<usize>,
 
@@ -111,6 +114,21 @@ pub struct MeilisearchArgs {
 
     #[arg(long)]
     pub dry_run: bool,
+
+    #[arg(long, value_name = "PATH")]
+    pub from_json: Option<PathBuf>,
+
+    #[arg(long, value_name = "PATH")]
+    pub from_ndjson: Option<PathBuf>,
+
+    #[arg(long)]
+    pub stats_only: bool,
+
+    #[arg(long)]
+    pub settings_only: bool,
+
+    #[arg(long, value_name = "N")]
+    pub sample: Option<usize>,
 }
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
@@ -145,6 +163,13 @@ pub enum LogFormat {
 pub enum MeilisearchModeArg {
     Upsert,
     CleanInsert,
+}
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+pub enum MeilisearchIdStrategyArg {
+    Sha256,
+    CanonicalUrl,
+    TitleSlug,
 }
 
 pub fn init_tracing(cli: &Cli) -> Result<()> {

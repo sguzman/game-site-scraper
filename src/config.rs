@@ -171,6 +171,20 @@ impl Default for MeilisearchMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MeilisearchIdStrategy {
+    Sha256,
+    CanonicalUrl,
+    TitleSlug,
+}
+
+impl Default for MeilisearchIdStrategy {
+    fn default() -> Self {
+        Self::Sha256
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MeilisearchConfig {
@@ -181,6 +195,7 @@ pub struct MeilisearchConfig {
     pub batch_size: usize,
     pub timeout_secs: u64,
     pub mode: MeilisearchMode,
+    pub id_strategy: MeilisearchIdStrategy,
     pub apply_settings_on_existing: bool,
     pub settings: MeilisearchSettingsConfig,
 }
@@ -195,6 +210,7 @@ impl Default for MeilisearchConfig {
             batch_size: 1000,
             timeout_secs: 120,
             mode: MeilisearchMode::Upsert,
+            id_strategy: MeilisearchIdStrategy::Sha256,
             apply_settings_on_existing: false,
             settings: MeilisearchSettingsConfig::default(),
         }
@@ -313,6 +329,7 @@ primary_key = "id"
 batch_size = 1000
 timeout_secs = 120
 mode = "upsert"
+id_strategy = "sha256"
 apply_settings_on_existing = false
 
 [meilisearch.settings]

@@ -2,255 +2,52 @@
 
 `game-scraper` parses saved game-release HTML pages into structured JSON metadata.
 
-## Features
+## Intent
 
-- Rich CLI (`clap`) with subcommands
-- Extensive structured logging (`tracing`)
-- TOML config that explicitly controls each scraped property
-- Per-document provenance (`path`, `bytes`, `sha256`)
-- Batch parsing for files and directories
-- Error collection without stopping the full run
+Convert messy saved pages into cleaner structured release records that can be searched, indexed, or fed into downstream catalogs.
 
-## Installation
+## Ambition
 
-```bash
-cargo build --release
-```
+The presence of Meilisearch integration and output-shaping modules suggests an ambition to be a repeatable game-metadata ingestion step rather than a one-off parser script.
 
-Binary path:
+## Current Status
 
-```bash
-target/release/game-scraper
-```
+The CLI, config, output, and search-integration modules are already present. The repository looks compact but purposeful.
 
-## Quick start
+## Core Capabilities Or Focus Areas
 
-Create config:
+- Parse saved HTML pages into structured data.
+- Emit JSON output.
+- Integrate with Meilisearch-oriented workflows.
+- Use config-driven behavior for scraping/parsing runs.
+- Separate filesystem, model, and output concerns.
 
-```bash
-cargo run -- init-config --path scrape.toml
-```
+## Project Layout
 
-Parse one HTML file:
+- `docs/`: project documentation, reference material, and roadmap notes.
+- `src/`: Rust source for the main crate or application entrypoint.
+- `Cargo.toml`: crate or workspace manifest and the first place to check for package structure.
 
-```bash
-cargo run -- parse tmp/some-game-page.html --config scrape.toml --pretty
-```
+## Setup And Requirements
 
-Parse an entire directory recursively:
+- Rust toolchain.
+- Saved game-related HTML pages in the expected format.
+- Optional Meilisearch environment if using that integration path.
+
+## Build / Run / Test Commands
 
 ```bash
-cargo run -- parse tmp --recursive --config scrape.toml --output out.json
+cargo build
+cargo test
+cargo run -- --help
 ```
 
-Parse as NDJSON (one item per line):
+## Notes, Limitations, Or Known Gaps
 
-```bash
-cargo run -- parse tmp --recursive --config scrape.toml --ndjson --output out.ndjson
-```
+- This project parses saved pages, not live browser sessions.
+- Output quality depends on the stability of the source page format.
 
-Meilisearch upsert (index parsed documents):
+## Next Steps Or Roadmap Hints
 
-```bash
-cargo run -- meilisearch tmp --recursive --config scrape.toml --mode upsert
-```
-
-Meilisearch clean insert (delete + recreate index):
-
-```bash
-cargo run -- meilisearch tmp --recursive --config scrape.toml --mode clean-insert
-```
-
-Meilisearch dry run (parse + summarize without indexing):
-
-```bash
-cargo run -- meilisearch tmp --recursive --config scrape.toml --dry-run
-```
-
-Meilisearch overrides (host/index/api key/primary key/settings apply):
-
-```bash
-cargo run -- meilisearch tmp --recursive --config scrape.toml --host http://127.0.0.1:7700 --index fitgirl-games --api-key masterKey --primary-key id --apply-settings
-```
-
-Meilisearch stats only (parse + counts, no mapping/indexing):
-
-```bash
-cargo run -- meilisearch tmp --recursive --config scrape.toml --stats-only
-```
-
-Meilisearch settings only (apply settings + exit):
-
-```bash
-cargo run -- meilisearch tmp --recursive --config scrape.toml --settings-only
-```
-
-Meilisearch id strategy override:
-
-```bash
-cargo run -- meilisearch tmp --recursive --config scrape.toml --id-strategy canonical-url
-```
-
-Meilisearch from JSON bundle:
-
-```bash
-cargo run -- meilisearch tmp --config scrape.toml --from-json out.json
-```
-
-Meilisearch from NDJSON:
-
-```bash
-cargo run -- meilisearch tmp --config scrape.toml --from-ndjson out.ndjson
-```
-
-Meilisearch dry run with sample documents:
-
-```bash
-cargo run -- meilisearch tmp --recursive --config scrape.toml --dry-run --sample 3
-```
-
-Meilisearch concurrent batches (limit in-flight):
-
-```bash
-cargo run -- meilisearch tmp --recursive --config scrape.toml --max-in-flight 4
-```
-
-Meilisearch fail-fast on first batch error:
-
-```bash
-cargo run -- meilisearch tmp --recursive --config scrape.toml --fail-fast
-```
-
-Meilisearch settings from file:
-
-```bash
-cargo run -- meilisearch tmp --recursive --config scrape.toml --settings-file docs/meili-settings.toml
-```
-
-Print effective config:
-
-```bash
-cargo run -- print-config --config scrape.toml
-```
-
-Generate shell completions:
-
-```bash
-cargo run -- completions bash > game-scraper.bash
-```
-
-## CLI
-
-Global flags:
-
-- `--config <PATH>` config file path
-- `--log-level <LEVEL_OR_FILTER>` tracing filter, default `info`
-- `--log-format <auto|pretty|json>` log renderer
-- `--no-color` disable ANSI color output
-
-Subcommands:
-
-- `parse`: parse input files/directories and emit JSON
-- `init-config`: write default TOML config template
-- `print-config`: print effective config as TOML
-- `completions`: print shell completion script
-- `meilisearch`: parse inputs and upsert documents into Meilisearch
-
-## Config
-
-Default config is generated by `init-config`. It has five sections:
-
-- `[output]` JSON formatting behavior
-- `[scrape]` field-level extraction toggles
-- `[links]` link-domain analytics controls
-- `[profile]` layout profile and spoiler section filters
-- `[meilisearch]` indexing settings
-
-`[output]` supports:
-
-- `pretty_json`: pretty JSON bundle formatting
-- `include_nulls`: include JSON `null` fields instead of omitting missing optionals
-- `ndjson`: output newline-delimited JSON records
-
-## Output structure
-
-Top-level JSON:
-
-- `tool`: name + version
-- `stats`: input/ok/error counts
-- `documents`: parsed documents
-- `errors`: parse failures with path and error details
-
-Per document:
-
-- `source`: path, byte size, SHA-256
-- `site`: detected layout profile name
-- `page`: title/canonical/meta (if enabled)
-- `post`: post-level metadata (if enabled)
-- `release`: release metadata block (if enabled)
-- `spoiler_sections`: extracted spoiler text sections
-- `link_domain_counts`: domain-only link counts
-- `download_section_headings`: matching heading text
-- `torrent_file`: whether one or more torrent-file links were found
-- `torrent_file_names`: anchor text labels for torrent-file links
-- `torrent_file_links`: extracted torrent-file URLs
-- `magnet_links`: extracted magnet URIs
-- `poster`: detected cover image URL (if enabled)
-
-## Meilisearch
-
-Local Meilisearch (Docker) using the provided compose file:
-
-```bash
-docker compose -f tmp/docker-compose.yaml up -d
-```
-
-Config (`[meilisearch]` in `scrape.toml`):
-
-- `host`: base URL (e.g. `http://127.0.0.1:7700`)
-- `api_key`: optional API key (empty means no auth)
-- `index_uid`: index name
-- `primary_key`: primary key to use when creating the index
-- `batch_size`: docs per batch
-- `timeout_secs`: task wait timeout (0 disables timeout)
-- `mode`: `upsert` or `clean_insert`
-- `apply_settings_on_existing`: if true, re-apply settings when index already exists
-- `id_strategy`: `sha256`, `canonical_url`, or `title_slug`
-
-Config (`[meilisearch.settings]` in `scrape.toml`):
-
-- `displayed_attributes`
-- `searchable_attributes`
-- `filterable_attributes`
-- `sortable_attributes`
-
-Input precedence:
-
-- If `--from-json` or `--from-ndjson` is provided, positional `INPUT` arguments are ignored.
-
-JSON/NDJSON formats:
-
-- JSON: either a full output bundle (`tool/stats/documents/errors`) or a raw array of `ParsedDocument`.
-- NDJSON: one JSON document per line; `type: summary` and `type: error` lines are skipped.
-
-Integration test plan (local):
-
-1. Start Meilisearch with `tmp/docker-compose.yaml`.
-2. Run `meilisearch` twice in `upsert` mode; verify no duplicates (same `id`).
-3. Run `meilisearch` in `clean-insert` mode; verify index was recreated and count matches input.
-4. Query the index and confirm `poster` is populated for known pages.
-
-Troubleshooting:
-
-- Auth errors: set `api_key` in `scrape.toml` or pass `--api-key`.
-- Index not found: check `index_uid` and host URL.
-- Payload too large: reduce `batch_size`.
-- Task timeout: increase `timeout_secs` or set it to `0` to disable.
-- Settings not applied on existing index: enable `apply_settings_on_existing` or pass `--apply-settings`.
-- ID strategy fallback: if canonical/title slug is missing, the ID falls back to SHA-256.
-- NDJSON errors: invalid lines are skipped and counted in `parsed_err`.
-
-## Notes
-
-- The parser supports a WordPress-style release layout plus a generic fallback.
-- HTML files under `tmp/` can be used as local test fixtures.
+- Add fixtures as source pages change.
+- Clarify the supported source-page families if the scraper broadens.
